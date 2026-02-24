@@ -9,8 +9,7 @@
         Phaser,
         PingPongDelay,
         AmplitudeModulation,
-        CombFilter,
-        TimeStretch.create() and EffectFactory.getEffectTypes()
+        CombFilter.create() and EffectFactory.getEffectTypes()
  */
 
 class Effect {
@@ -1835,10 +1834,6 @@ if (typeof module !== 'undefined' && module.exports) {
         WaveFolder,
         PitchShifter,
         GateExpander,
-        Pan360,
-        DopplerShift,
-        ZenerLimiter,
-        TimeStretch,
         EffectFactory 
     };
 }
@@ -2433,161 +2428,246 @@ class GateExpander extends Effect {
         super.destroy();
     }
 }
-/**
- * 360 Pan (Surround Panner) Effect
- * Creates a rotating/positioning effect that moves the sound around the listener
- * in a full 360-degree circle. Uses StereoPannerNode with an LFO for continuous rotation.
- *
- * Parameters:
- * - rate: 0 to 10 Hz (default 0.5) - rotation speed
- * - width: 0 to 1 (default 1) - pan amount (1 = full 360, 0.5 = 180°, 0 = center)
- * - manual: -1 to 1 (default 0) - manual position override (when rate = 0)
- * - direction: 0 or 1 (default 0) - 0 = clockwise, 1 = counter-clockwise
- * - mix: 0 to 1 (default 1) - wet/dry mix
- *
- * Pan Mapping:
- * - 0° = Center (0)
- * - 90° = Full Right (1)
- * - 180° = Center (0) - back
- * - 270° = Full Left (-1)
- * - 360° = Back to Center
- *
- * Signal Flow:
- * Input -> StereoPanner -> Wet Gain -> Output
- *              ↓
- *            LFO (modulates pan position)
- */
 
+
+/**
+ * Pan360 Effect - 360 Degree Surround Panner
+ * Rotates sound around the listener for immersive spatial effects
+ */
 class Pan360 extends Effect {
     constructor(audioContext) {
         super(audioContext);
-        this.type = '360pan';
-
+        this.type = 'pan360';
+        
         this.input = this.audioContext.createGain();
         this.output = this.audioContext.createGain();
-
-        // Core stereo panner
+        
+        // Stereo panner for positioning
         this.panner = this.audioContext.createStereoPanner();
-
+        
         // LFO for continuous rotation
         this.lfo = this.audioContext.createOscillator();
         this.lfoGain = this.audioContext.createGain();
-        this.lfoOffset = this.audioContext.createConstantSource();
-
-        // Manual position control (used when rate = 0)
-        this.manualGain = this.audioContext.createGain();
-
-        // Wet/dry mix
+        
+        // Constant offset for manual position
+        this.offsetNode = this.audioContext.createConstantSource();
+        this.offsetGain = this.audioContext.createGain();
+        
+        // Mix gains
         this.dryGain = this.audioContext.createGain();
         this.wetGain = this.audioContext.createGain();
-
+        
         // Parameters
         this.params = {
-            rate: 0.5,      // LFO rate in Hz (0-10)
-            width: 1,       // Pan width (0-1, 1 = full 360°)
-            manual: 0,      // Manual position override (-1 to 1)
+            rate: 0.5,      // Rotation speed in Hz
+            width: 1,       // Pan width (0-1)
+            manual: 0,      // Manual position (-1 to 1)
             direction: 0,   // 0 = clockwise, 1 = counter-clockwise
-            mix: 1          // Wet/dry mix (0-1)
+            mix: 1          // Wet/dry mix
         };
-
-        // Build signal routing
+        
+        // Build routing
         this.buildRouting();
-
-        // Configure and start LFO
+        
+        // Start LFO and offset
         this.lfo.type = 'sine';
         this.lfo.frequency.value = this.params.rate;
         this.lfo.start();
-
-        // Start constant offset source
-        this.lfoOffset.start();
-        this.lfoOffset.offset.value = 0;
-
+        
+        this.offsetNode.offset.value = this.params.manual;
+        this.offsetNode.start();
+        
         this.updateParams();
     }
-
+    
     buildRouting() {
-        // Input splits to dry and wet paths
+        // Dry path
         this.input.connect(this.dryGain);
-        this.input.connect(this.panner);
-
+        this.dryGain.connect(this.output);
+        
         // Wet path through panner
+        this.input.connect(this.panner);
         this.panner.connect(this.wetGain);
         this.wetGain.connect(this.output);
-
-        // Dry path
-        this.dryGain.connect(this.output);
-
-        // LFO controls the panner position
-        // LFO -> lfoGain -> panner.pan (modulates around center)
+        
+        // LFO modulates panner
         this.lfo.connect(this.lfoGain);
         this.lfoGain.connect(this.panner.pan);
-
-        // Manual position control
-        this.manualGain.connect(this.panner.pan);
+        
+        // Offset adds to pan position
+        this.offsetNode.connect(this.offsetGain);
+        this.offsetGain.connect(this.panner.pan);
     }
-
+    
     updateParams() {
         const now = this.audioContext.currentTime;
-
-        // Update LFO rate
+        
+        // LFO rate
         this.lfo.frequency.setTargetAtTime(this.params.rate, now, 0.01);
-
-        // Width controls the pan range
-        // width 1: pan goes from -1 to +1 (full 360°)
-        // width 0.5: pan goes from -0.5 to +0.5 (180°)
-        // width 0: pan stays at center
-        this.lfoGain.gain.setTargetAtTime(this.params.width, now, 0.01);
-
-        // Manual position override
-        // When rate is 0, manual controls the static position
-        // When rate > 0, manual adds an offset to the LFO modulation
-        this.manualGain.gain.setTargetAtTime(this.params.manual, now, 0.01);
-
-        // Direction: clockwise vs counter-clockwise
-        // Invert LFO gain for counter-clockwise rotation
-        const directionMultiplier = this.params.direction === 1 ? -1 : 1;
-        this.lfoGain.gain.setTargetAtTime(this.params.width * directionMultiplier, now, 0.01);
-
+        
+        // LFO depth (width) - inverted for clockwise/counter-clockwise
+        const directionMult = this.params.direction === 0 ? 1 : -1;
+        this.lfoGain.gain.setTargetAtTime(this.params.width * directionMult, now, 0.01);
+        
+        // Manual offset
+        this.offsetGain.gain.setTargetAtTime(1, now, 0.01);
+        this.offsetNode.offset.setTargetAtTime(this.params.manual, now, 0.01);
+        
         // Mix
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
     }
-
+    
     setRate(rate) {
         this.params.rate = Math.max(0, Math.min(10, rate));
         this.updateParams();
     }
-
+    
     setWidth(width) {
         this.params.width = Math.max(0, Math.min(1, width));
         this.updateParams();
     }
-
+    
     setManual(manual) {
         this.params.manual = Math.max(-1, Math.min(1, manual));
         this.updateParams();
     }
-
+    
     setDirection(direction) {
         this.params.direction = direction === 1 ? 1 : 0;
         this.updateParams();
     }
-
+    
     setMix(mix) {
         this.params.mix = Math.max(0, Math.min(1, mix));
         this.updateParams();
     }
-
+    
     getParamDefinitions() {
         return [
             { name: 'rate', label: 'Rate (Hz)', min: 0, max: 10, default: 0.5, step: 0.1 },
             { name: 'width', label: 'Width', min: 0, max: 1, default: 1, step: 0.01 },
             { name: 'manual', label: 'Manual Pos', min: -1, max: 1, default: 0, step: 0.01 },
-            { name: 'direction', label: 'Direction', min: 0, max: 1, default: 0, step: 1 },
+            { name: 'direction', label: 'Direction (0=CW)', min: 0, max: 1, default: 0, step: 1 },
             { name: 'mix', label: 'Mix', min: 0, max: 1, default: 1, step: 0.01 }
         ];
     }
+    
+    destroy() {
+        this.lfo.stop();
+        this.offsetNode.stop();
+        super.destroy();
+    }
+}
 
+
+/**
+ * DopplerShift Effect - Virtual Motion Simulation
+ * Simulates pitch change as sound source moves toward/away from listener
+ */
+class DopplerShift extends Effect {
+    constructor(audioContext) {
+        super(audioContext);
+        this.type = 'doppler';
+        
+        this.input = this.audioContext.createGain();
+        this.output = this.audioContext.createGain();
+        
+        // Delay line for distance simulation
+        this.delayLine = this.audioContext.createDelay(1.0);
+        
+        // LFO for circular motion
+        this.lfo = this.audioContext.createOscillator();
+        this.lfoGain = this.audioContext.createGain();
+        this.lfoOffset = this.audioContext.createConstantSource();
+        
+        // Stereo panner for position
+        this.panner = this.audioContext.createStereoPanner();
+        
+        // Mix gains
+        this.dryGain = this.audioContext.createGain();
+        this.wetGain = this.audioContext.createGain();
+        
+        // Parameters
+        this.params = {
+            speed: 1,
+            intensity: 0.5,
+            distance: 50,
+            panMotion: 1,
+            mix: 0.5
+        };
+        
+        this.buildRouting();
+        
+        this.lfo.type = 'sine';
+        this.lfo.frequency.value = this.params.speed;
+        this.lfo.start();
+        
+        this.lfoOffset.offset.value = 0.5;
+        this.lfoOffset.start();
+        
+        this.updateParams();
+    }
+    
+    buildRouting() {
+        // Dry path
+        this.input.connect(this.dryGain);
+        this.dryGain.connect(this.output);
+        
+        // Wet path: delay -> panner
+        this.input.connect(this.delayLine);
+        this.delayLine.connect(this.panner);
+        this.panner.connect(this.wetGain);
+        this.wetGain.connect(this.output);
+        
+        // LFO modulates delay time
+        this.lfo.connect(this.lfoGain);
+        this.lfoGain.connect(this.delayLine.delayTime);
+        
+        // Offset ensures positive delay
+        this.lfoOffset.connect(this.delayLine.delayTime);
+        
+        // LFO also modulates pan (if enabled)
+        this.lfo.connect(this.panner.pan);
+    }
+    
+    updateParams() {
+        const now = this.audioContext.currentTime;
+        
+        const baseDelay = this.params.distance / 343; // Speed of sound
+        const depth = baseDelay * this.params.intensity * 0.5;
+        
+        this.lfo.frequency.setTargetAtTime(this.params.speed, now, 0.01);
+        this.lfoGain.gain.setTargetAtTime(depth, now, 0.01);
+        this.lfoOffset.offset.setTargetAtTime(baseDelay, now, 0.01);
+        
+        if (this.params.panMotion) {
+            this.lfo.connect(this.panner.pan);
+        } else {
+            this.lfo.disconnect(this.panner.pan);
+            this.panner.pan.setValueAtTime(0, now);
+        }
+        
+        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
+    }
+    
+    setSpeed(speed) { this.params.speed = speed; this.updateParams(); }
+    setIntensity(intensity) { this.params.intensity = intensity; this.updateParams(); }
+    setDistance(distance) { this.params.distance = distance; this.updateParams(); }
+    setPanMotion(panMotion) { this.params.panMotion = panMotion; this.updateParams(); }
+    setMix(mix) { this.params.mix = mix; this.updateParams(); }
+    
+    getParamDefinitions() {
+        return [
+            { name: 'speed', label: 'Speed (Hz)', min: 0.1, max: 10, default: 1, step: 0.1 },
+            { name: 'intensity', label: 'Intensity', min: 0, max: 1, default: 0.5, step: 0.01 },
+            { name: 'distance', label: 'Distance (m)', min: 10, max: 100, default: 50, step: 5 },
+            { name: 'panMotion', label: 'Pan Motion', min: 0, max: 1, default: 1, step: 1 },
+            { name: 'mix', label: 'Mix', min: 0, max: 1, default: 0.5, step: 0.01 }
+        ];
+    }
+    
     destroy() {
         this.lfo.stop();
         this.lfoOffset.stop();
@@ -2596,1114 +2676,250 @@ class Pan360 extends Effect {
 }
 
 
-// ============================================================================
-// TIME STRETCH EFFECT
-// ============================================================================
-
 /**
- * TimeStretch Effect - Granular Time Stretching
- * 
- * Changes playback speed without affecting pitch using granular synthesis.
- * Uses multiple overlapping "grains" (small audio chunks) with smooth crossfading.
- * 
- * Architecture:
- * - 4 parallel grain players with staggered triggering
- * - Circular buffer stores 2-5 seconds of input
- * - Hann window for smooth grain envelopes
- * - Overlap-add synthesis for seamless output
- * 
- * Parameters:
- * - speed: 0.5 to 2.0 (default 1.0) - time stretch factor
- * - grainSize: 50 to 200 ms (default 100) - grain duration  
- * - overlap: 0.1 to 0.5 (default 0.25) - grain overlap amount
- * - pitchCompensation: 0 or 1 (default 1) - maintain original pitch
- * - mix: 0 to 1 (default 1) - wet/dry mix
+ * ZenerLimiter Effect - Enhanced Limiter with Emphasis
+ * Broadcast-style compression with pre/post emphasis EQ
  */
-
-class TimeStretch extends Effect {
-    constructor(audioContext) {
-        super(audioContext);
-        this.type = 'timestretch';
-        
-        // Main I/O
-        this.input = this.audioContext.createGain();
-        this.output = this.audioContext.createGain();
-        
-        // Wet/dry mix
-        this.dryGain = this.audioContext.createGain();
-        this.wetGain = this.audioContext.createGain();
-        
-        // Buffer settings (2 seconds at 48kHz)
-        this.maxBufferSize = Math.ceil(5.0 * this.audioContext.sampleRate);
-        this.bufferSize = Math.ceil(2.0 * this.audioContext.sampleRate);
-        
-        // Circular buffers for each channel
-        this.buffer = [
-            new Float32Array(this.maxBufferSize),
-            new Float32Array(this.maxBufferSize)
-        ];
-        this.writeIndex = 0;
-        this.bufferReady = false;
-        this.samplesWritten = 0;
-        
-        // Grain players
-        this.numGrains = 4;
-        this.grains = [];
-        for (let i = 0; i < this.numGrains; i++) {
-            this.grains.push({
-                readPosition: 0,
-                active: false,
-                phase: 0,      // 0 to 1 for window
-                size: 0,       // Grain size in samples
-                channel: 0
-            });
-        }
-        
-        // Grain scheduling
-        this.nextGrainTime = 0;
-        this.sampleCounter = 0;
-        
-        // Parameters
-        this.params = {
-            speed: 1.0,
-            grainSize: 0.1,
-            overlap: 0.25,
-            pitchCompensation: 1,
-            mix: 1.0
-        };
-        
-        // Smooth parameter values
-        this.smoothedSpeed = 1.0;
-        this.smoothCoeff = 0.001;
-        
-        // Build routing
-        this.buildRouting();
-        
-        // Start processing loop
-        this.startProcessing();
-    }
-    
-    buildRouting() {
-        this.input.connect(this.dryGain);
-        this.dryGain.connect(this.output);
-        
-        // Wet path will be mixed in from processGrains
-        this.wetGain.connect(this.output);
-        
-        this.updateMix();
-    }
-    
-    /**
-     * Hann window for smooth grain envelope
-     */
-    hannWindow(phase) {
-        return 0.5 * (1 - Math.cos(2 * Math.PI * phase));
-    }
-    
-    /**
-     * Linear interpolation read from buffer
-     */
-    readBuffer(channel, position) {
-        const size = this.bufferSize;
-        const intPos = Math.floor(position);
-        const frac = position - intPos;
-        const idx1 = ((intPos % size) + size) % size;
-        const idx2 = (((intPos + 1) % size) + size) % size;
-        
-        const s1 = this.buffer[channel][idx1];
-        const s2 = this.buffer[channel][idx2];
-        
-        return s1 + frac * (s2 - s1);
-    }
-    
-    /**
-     * Trigger a new grain
-     */
-    triggerGrain(grain, speed, grainSize) {
-        grain.active = true;
-        grain.phase = 0;
-        grain.size = Math.floor(grainSize * this.audioContext.sampleRate);
-        
-        // Read position is behind write head
-        const readOffset = grain.size;
-        grain.readPosition = (this.writeIndex - readOffset + this.bufferSize) % this.bufferSize;
-        grain.speed = speed;
-    }
-    
-    /**
-     * Process a single grain
-     */
-    processGrain(grain, channel) {
-        if (!grain.active) return 0;
-        
-        // Read from buffer
-        const sample = this.readBuffer(channel, grain.readPosition);
-        
-        // Apply window
-        const windowValue = this.hannWindow(grain.phase);
-        
-        // Update phase
-        const phaseIncrement = 1 / grain.size;
-        grain.phase += phaseIncrement;
-        
-        // Update read position
-        grain.readPosition = (grain.readPosition + grain.speed) % this.bufferSize;
-        
-        // Check if finished
-        if (grain.phase >= 1.0) {
-            grain.active = false;
-        }
-        
-        return sample * windowValue;
-    }
-    
-    /**
-     * Main processing loop - runs on each animation frame
-     * For real-time use, we use a ScriptProcessorNode approach
-     */
-    startProcessing() {
-        // Create a processor for real-time grain processing
-        // Buffer size 4096 gives good balance of latency and performance
-        this.processor = this.audioContext.createScriptProcessor(4096, 2, 2);
-        
-        this.processor.onaudioprocess = (e) => {
-            const inputData = [e.inputBuffer.getChannelData(0), e.inputBuffer.getChannelData(1)];
-            const outputData = [e.outputBuffer.getChannelData(0), e.outputBuffer.getChannelData(1)];
-            
-            const numSamples = inputData[0].length;
-            const numChannels = 2;
-            
-            // Smooth speed parameter
-            this.smoothedSpeed += (this.params.speed - this.smoothedSpeed) * this.smoothCoeff;
-            const speed = this.smoothedSpeed;
-            const grainSize = this.params.grainSize;
-            const overlap = this.params.overlap;
-            const mix = this.params.mix;
-            
-            // Calculate grain interval
-            const grainSamples = Math.floor(grainSize * this.audioContext.sampleRate);
-            const intervalSamples = Math.floor(grainSamples * (1 - overlap));
-            
-            // Update buffer size based on needs
-            const minBuffer = Math.max(grainSamples * 4, this.audioContext.sampleRate);
-            this.bufferSize = Math.min(Math.ceil(minBuffer * 1.5), this.maxBufferSize);
-            
-            // Process each sample
-            for (let i = 0; i < numSamples; i++) {
-                // Write input to circular buffer
-                for (let ch = 0; ch < numChannels; ch++) {
-                    this.buffer[ch][this.writeIndex] = inputData[ch][i];
-                }
-                this.writeIndex = (this.writeIndex + 1) % this.bufferSize;
-                this.sampleCounter++;
-                
-                // Check buffer readiness
-                if (!this.bufferReady) {
-                    this.samplesWritten++;
-                    if (this.samplesWritten >= this.bufferSize) {
-                        this.bufferReady = true;
-                    }
-                }
-                
-                // Trigger grains
-                if (this.bufferReady && this.sampleCounter >= this.nextGrainTime) {
-                    for (let g = 0; g < this.numGrains; g++) {
-                        if (!this.grains[g].active) {
-                            this.triggerGrain(this.grains[g], speed, grainSize);
-                            break;
-                        }
-                    }
-                    this.nextGrainTime = this.sampleCounter + intervalSamples;
-                }
-                
-                // Process grains for each channel
-                for (let ch = 0; ch < numChannels; ch++) {
-                    let wetSample = 0;
-                    let activeCount = 0;
-                    
-                    for (let g = 0; g < this.numGrains; g++) {
-                        const grainSample = this.processGrain(this.grains[g], ch);
-                        if (this.grains[g].active || grainSample !== 0) {
-                            wetSample += grainSample;
-                            activeCount++;
-                        }
-                    }
-                    
-                    // Normalize
-                    if (activeCount > 0) {
-                        const expectedGrains = 1 / (1 - overlap);
-                        wetSample /= Math.sqrt(expectedGrains);
-                    }
-                    
-                    // Mix
-                    const drySample = inputData[ch][i];
-                    outputData[ch][i] = drySample * (1 - mix) + wetSample * mix;
-                }
-            }
-        };
-        
-        // Connect the processor
-        this.input.connect(this.processor);
-        this.processor.connect(this.wetGain);
-    }
-    
-    updateMix() {
-        const now = this.audioContext.currentTime;
-        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
-        this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
-    }
-    
-    updateParams() {
-        this.updateMix();
-    }
-    
-    setSpeed(speed) {
-        this.params.speed = Math.max(0.25, Math.min(4.0, speed));
-    }
-    
-    setGrainSize(ms) {
-        const seconds = ms / 1000;
-        this.params.grainSize = Math.max(0.02, Math.min(0.5, seconds));
-    }
-    
-    setOverlap(overlap) {
-        this.params.overlap = Math.max(0.1, Math.min(0.75, overlap));
-    }
-    
-    setPitchCompensation(enabled) {
-        this.params.pitchCompensation = enabled > 0.5 ? 1 : 0;
-    }
-    
-    setMix(mix) {
-        this.params.mix = Math.max(0, Math.min(1, mix));
-        this.updateParams();
-    }
-    
-    resetBuffer() {
-        this.writeIndex = 0;
-        this.samplesWritten = 0;
-        this.bufferReady = false;
-        this.sampleCounter = 0;
-        this.nextGrainTime = 0;
-        
-        for (let g = 0; g < this.numGrains; g++) {
-            this.grains[g].active = false;
-            this.grains[g].phase = 0;
-        }
-        
-        for (let ch = 0; ch < 2; ch++) {
-            this.buffer[ch].fill(0);
-        }
-    }
-    
-    getParamDefinitions() {
-        return [
-            {
-                name: 'speed',
-                label: 'Speed',
-                min: 0.25,
-                max: 4.0,
-                default: 1.0,
-                step: 0.01,
-                displayTransform: (v) => {
-                    if (v < 1) return `${v.toFixed(2)}x (slow)`;
-                    if (v > 1) return `${v.toFixed(2)}x (fast)`;
-                    return '1.0x (normal)';
-                }
-            },
-            {
-                name: 'grainSize',
-                label: 'Grain Size (ms)',
-                min: 20,
-                max: 500,
-                default: 100,
-                step: 5,
-                displayTransform: (v) => `${Math.round(v)}ms`
-            },
-            {
-                name: 'overlap',
-                label: 'Overlap',
-                min: 0.1,
-                max: 0.75,
-                default: 0.25,
-                step: 0.01,
-                displayTransform: (v) => `${(v * 100).toFixed(0)}%`
-            },
-            {
-                name: 'pitchCompensation',
-                label: 'Pitch Comp',
-                min: 0,
-                max: 1,
-                default: 1,
-                step: 1,
-                displayTransform: (v) => v > 0.5 ? 'On' : 'Off'
-            },
-            {
-                name: 'mix',
-                label: 'Mix',
-                min: 0,
-                max: 1,
-                default: 1,
-                step: 0.01,
-                displayTransform: (v) => `${(v * 100).toFixed(0)}%`
-            }
-        ];
-    }
-    
-    destroy() {
-        if (this.processor) {
-            this.processor.disconnect();
-            this.processor.onaudioprocess = null;
-        }
-        super.destroy();
-    }
-}
-
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { 
-        Pan360,
-        TimeStretch
-    };
-}
-/**
- * Doppler Shift Effect
- * Simulates the pitch change heard when a sound source moves toward/away from the listener
- * (like a siren passing by). As the source approaches, pitch rises; as it recedes, pitch drops.
- * 
- * Implementation uses:
- * 1. Delay line - Simulates distance (further = more delay)
- * 2. LFO modulation - Simulates circular motion by varying delay time
- * 3. Pitch effect - Changing delay time = pitch shift (decreasing delay = higher pitch)
- * 4. Panning - Optional stereo panning that follows virtual position
- * 
- * Motion Simulation:
- * - Virtual source moves in a circle around the listener
- * - At closest approach: minimum delay, maximum pitch
- * - At farthest point: maximum delay, minimum pitch
- * - Creates characteristic "sweep" effect
- */
-
-class DopplerShift extends Effect {
-    constructor(audioContext) {
-        super(audioContext);
-        this.type = 'doppler';
-
-        this.input = this.audioContext.createGain();
-        this.output = this.audioContext.createGain();
-
-        // Delay line for simulating distance
-        // Max delay needs to accommodate distance-based delay + modulation
-        this.delay = this.audioContext.createDelay(0.5);
-
-        // LFO for circular motion simulation
-        this.lfo = this.audioContext.createOscillator();
-        this.lfoGain = this.audioContext.createGain();
-        this.delayOffset = this.audioContext.createConstantSource();
-
-        // Mixers for delay time control
-        this.delayTimeMixer = this.audioContext.createGain();
-
-        // Stereo panner for position-based panning
-        this.panner = this.audioContext.createStereoPanner();
-        this.panGain = this.audioContext.createGain();
-
-        // Wet/dry mix
-        this.dryGain = this.audioContext.createGain();
-        this.wetGain = this.audioContext.createGain();
-
-        // Parameters
-        this.params = {
-            speed: 1,           // 0.1 to 10 Hz - how fast the source moves
-            intensity: 0.5,     // 0 to 1 - how strong the effect (depth of delay change)
-            distance: 50,       // 10 to 100 meters - virtual distance factor
-            panMotion: 1,       // 0 or 1 - enable panning that follows position
-            mix: 0.5            // 0 to 1 - wet/dry mix
-        };
-
-        // Constants for doppler calculation
-        this.speedOfSound = 343;        // m/s (speed of sound in air)
-        this.baseDelayTime = 0.05;      // 50ms minimum base delay
-        this.maxDelayModulation = 0.05; // 50ms max modulation depth
-
-        this.buildRouting();
-        this.startLFO();
-        this.updateParams();
-    }
-
-    buildRouting() {
-        // Input splits to dry and wet paths
-        this.input.connect(this.dryGain);
-        this.input.connect(this.delay);
-
-        // Wet path: delay -> panner -> wet gain -> output
-        this.delay.connect(this.panner);
-        this.panner.connect(this.wetGain);
-        this.wetGain.connect(this.output);
-
-        // Dry path
-        this.dryGain.connect(this.output);
-
-        // LFO controls delay time modulation
-        // LFO -> lfoGain -> delayTimeMixer
-        this.lfo.connect(this.lfoGain);
-        this.lfoGain.connect(this.delayTimeMixer);
-        this.delayOffset.connect(this.delayTimeMixer);
-        this.delayTimeMixer.connect(this.delay.delayTime);
-
-        // LFO also controls panner (position follows motion)
-        // Use a separate gain for pan control
-        this.lfo.connect(this.panGain);
-        this.panGain.connect(this.panner.pan);
-
-        // Set initial delay time
-        this.delay.delayTime.value = this.baseDelayTime;
-    }
-
-    startLFO() {
-        // LFO generates position in cycle (-1 to 1)
-        // Sine wave creates smooth circular motion
-        this.lfo.type = 'sine';
-        this.lfo.frequency.value = this.params.speed;
-        this.lfo.start();
-
-        // Start constant offset source
-        this.delayOffset.start();
-        this.delayOffset.offset.value = this.baseDelayTime;
-    }
-
-    /**
-     * Calculate delay time parameters based on virtual distance and intensity
-     * 
-     * The delay time represents:
-     * - Base delay: simulates minimum distance to source
-     * - Modulation: simulates distance change as source moves
-     * 
-     * At position 0 (closest): minimum delay, normal pitch
-     * At position +/-1 (farthest): maximum delay, shifted pitch
-     * 
-     * Pitch shift occurs because:
-     * - Decreasing delay time = sound "catches up" = pitch rises
-     * - Increasing delay time = sound "falls behind" = pitch drops
-     */
-    calculateDelayParams() {
-        // Convert distance (meters) to delay time
-        // t = distance / speedOfSound
-        // We scale this to reasonable audio delay times
-        const distanceDelay = (this.params.distance / this.speedOfSound) * 0.001;
-        
-        // Base delay includes distance factor plus minimum buffer
-        const baseDelay = this.baseDelayTime + distanceDelay;
-
-        // Modulation depth based on intensity
-        // Higher intensity = more delay variation = more pitch shift
-        const modulationDepth = this.maxDelayModulation * this.params.intensity;
-
-        return {
-            baseDelay: baseDelay,
-            modulationDepth: modulationDepth
-        };
-    }
-
-    updateParams() {
-        const now = this.audioContext.currentTime;
-
-        // Update LFO frequency (speed of motion)
-        this.lfo.frequency.setTargetAtTime(this.params.speed, now, 0.01);
-
-        // Calculate delay parameters
-        const delayParams = this.calculateDelayParams();
-
-        // Update delay offset (base delay time)
-        this.delayOffset.offset.setTargetAtTime(delayParams.baseDelay, now, 0.01);
-
-        // Update LFO gain (modulation depth)
-        // LFO output (-1 to 1) * gain = delay variation
-        this.lfoGain.gain.setTargetAtTime(delayParams.modulationDepth, now, 0.01);
-
-        // Update panning if enabled
-        if (this.params.panMotion) {
-            // LFO output (-1 to 1) maps directly to pan (-1 to 1)
-            // Source at -1 (approaching from left) -> pan left
-            // Source at +1 (receding to right) -> pan right
-            this.panGain.gain.setTargetAtTime(1.0, now, 0.01);
-        } else {
-            // Disable panning motion
-            this.panGain.gain.setTargetAtTime(0, now, 0.01);
-        }
-
-        // Update wet/dry mix
-        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
-        this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
-    }
-
-    // Parameter setters
-    setSpeed(speed) {
-        // Clamp to valid range: 0.1 to 10 Hz
-        this.params.speed = Math.max(0.1, Math.min(10, speed));
-        this.updateParams();
-    }
-
-    setIntensity(intensity) {
-        // Clamp to valid range: 0 to 1
-        this.params.intensity = Math.max(0, Math.min(1, intensity));
-        this.updateParams();
-    }
-
-    setDistance(distance) {
-        // Clamp to valid range: 10 to 100 meters
-        this.params.distance = Math.max(10, Math.min(100, distance));
-        this.updateParams();
-    }
-
-    setPanMotion(enabled) {
-        // 0 = disabled, 1 = enabled
-        this.params.panMotion = enabled ? 1 : 0;
-        this.updateParams();
-    }
-
-    setMix(mix) {
-        // Clamp to valid range: 0 to 1
-        this.params.mix = Math.max(0, Math.min(1, mix));
-        this.updateParams();
-    }
-
-    getParamDefinitions() {
-        return [
-            {
-                name: 'speed',
-                label: 'Speed (Hz)',
-                min: 0.1,
-                max: 10,
-                default: 1,
-                step: 0.1
-            },
-            {
-                name: 'intensity',
-                label: 'Intensity',
-                min: 0,
-                max: 1,
-                default: 0.5,
-                step: 0.01
-            },
-            {
-                name: 'distance',
-                label: 'Distance (m)',
-                min: 10,
-                max: 100,
-                default: 50,
-                step: 1
-            },
-            {
-                name: 'panMotion',
-                label: 'Pan Motion',
-                min: 0,
-                max: 1,
-                default: 1,
-                step: 1
-            },
-            {
-                name: 'mix',
-                label: 'Mix',
-                min: 0,
-                max: 1,
-                default: 0.5,
-                step: 0.01
-            }
-        ];
-    }
-
-    destroy() {
-        this.lfo.stop();
-        this.delayOffset.stop();
-        super.destroy();
-    }
-}
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { DopplerShift };
-}
-/**
- * Enhanced Zener Limiter
- * Professional broadcast-style limiter with pre-emphasis/de-emphasis EQ
- * 
- * Signal Flow:
- * Input -> Pre-emphasis (high-shelf boost) -> Compressor/Limiter -> 
- * De-emphasis (high-shelf cut) -> Saturation -> Makeup Gain -> Mix -> Output
- * 
- * The emphasis technique:
- * 1. Pre-emphasis boosts highs BEFORE compression (reduces harshness)
- * 2. Compression/limiting controls peaks
- * 3. De-emphasis cuts highs AFTER compression (restores tonal balance)
- * 4. Result: Warmer, more controlled sound with less "crushed" high frequencies
- */
-
 class ZenerLimiter extends Effect {
     constructor(audioContext) {
         super(audioContext);
-        this.type = 'zenerlimiter';
+        this.type = 'zener';
         
         this.input = this.audioContext.createGain();
         this.output = this.audioContext.createGain();
         
-        // Pre-emphasis filter (high-shelf boost)
+        // Pre-emphasis (boost before compression)
         this.preEmphasis = this.audioContext.createBiquadFilter();
         this.preEmphasis.type = 'highshelf';
-        this.preEmphasis.frequency.value = 4000;
-        this.preEmphasis.gain.value = 0;
         
-        // Main compressor/limiter
+        // Compressor/Limiter
         this.compressor = this.audioContext.createDynamicsCompressor();
         
-        // De-emphasis filter (high-shelf cut - mirrors pre-emphasis)
-        this.deEmphasis = this.audioContext.createBiquadFilter();
-        this.deEmphasis.type = 'highshelf';
-        this.deEmphasis.frequency.value = 4000;
-        this.deEmphasis.gain.value = 0;
+        // De-emphasis (cut after compression)
+        this.deEmphasis = this.audioContext.createGain();
         
-        // Harmonic saturation for Zener-style character
+        // Saturation for character
         this.saturator = this.audioContext.createWaveShaper();
-        this.saturationGain = this.audioContext.createGain();
         
         // Makeup gain
         this.makeupGain = this.audioContext.createGain();
         
-        // Wet/dry mix
+        // Mix
         this.dryGain = this.audioContext.createGain();
         this.wetGain = this.audioContext.createGain();
         
         // Parameters
         this.params = {
-            threshold: -24,     // dB, compressor threshold
-            ratio: 12,          // 1:1 to 20:1 compression ratio
-            attack: 0.003,      // seconds, compressor attack
-            release: 0.25,      // seconds, compressor release
-            emphasis: 0.5,      // 0-1, amount of pre/de-emphasis
-            emphasisFreq: 4000, // Hz, emphasis center frequency
-            saturation: 0.3,    // 0-1, harmonic saturation amount
-            makeup: 0,          // dB, makeup gain
-            mix: 1.0            // 0-1, wet/dry mix
+            threshold: -24,
+            ratio: 12,
+            attack: 0.003,
+            release: 0.25,
+            emphasis: 0.5,
+            emphasisFreq: 4000,
+            saturation: 0.3,
+            makeup: 0,
+            mix: 1
         };
         
-        // Build saturation curve
+        this.buildRouting();
         this.makeSaturationCurve();
-        
-        // Signal routing:
-        // input -> pre-emphasis -> compressor -> de-emphasis -> saturator -> makeup -> wet
+        this.updateParams();
+    }
+    
+    buildRouting() {
+        // Input -> pre-emphasis -> compressor -> de-emphasis -> saturation -> makeup -> wet
         this.input.connect(this.preEmphasis);
         this.preEmphasis.connect(this.compressor);
         this.compressor.connect(this.deEmphasis);
         this.deEmphasis.connect(this.saturator);
-        this.saturator.connect(this.saturationGain);
-        this.saturationGain.connect(this.makeupGain);
+        this.saturator.connect(this.makeupGain);
         this.makeupGain.connect(this.wetGain);
         this.wetGain.connect(this.output);
         
         // Dry path
         this.input.connect(this.dryGain);
         this.dryGain.connect(this.output);
-        
-        this.updateParams();
     }
     
-    /**
-     * Create Zener-style saturation curve
-     * Soft limiting with harmonic generation for warm, analog character
-     */
     makeSaturationCurve() {
         const samples = 44100;
         const curve = new Float32Array(samples);
-        const amount = this.params.saturation * 10 + 1; // 1 to 11
+        const amount = this.params.saturation * 10 + 1;
         
         for (let i = 0; i < samples; i++) {
             const x = (i * 2) / samples - 1;
-            
-            // Zener-like soft limiting using hyperbolic tangent
-            // Creates smooth saturation with controlled harmonics
-            const saturated = Math.tanh(amount * x);
-            
-            // Blend between clean and saturated based on saturation parameter
-            curve[i] = x * (1 - this.params.saturation) + saturated * this.params.saturation;
+            curve[i] = Math.tanh(amount * x);
         }
         
         this.saturator.curve = curve;
         this.saturator.oversample = '4x';
     }
     
-    /**
-     * Calculate emphasis gain based on emphasis amount
-     * Maps 0-1 to +3dB to +12dB boost (pre) and corresponding cut (de)
-     */
-    calculateEmphasisGain(emphasisAmount) {
-        // Map 0-1 to +3dB to +12dB
-        return 3 + (emphasisAmount * 9);
-    }
-    
     updateParams() {
         const now = this.audioContext.currentTime;
         
-        // Compressor parameters
         this.compressor.threshold.setTargetAtTime(this.params.threshold, now, 0.01);
+        this.compressor.knee.setTargetAtTime(30, now, 0.01);
         this.compressor.ratio.setTargetAtTime(this.params.ratio, now, 0.01);
         this.compressor.attack.setTargetAtTime(this.params.attack, now, 0.01);
         this.compressor.release.setTargetAtTime(this.params.release, now, 0.01);
-        this.compressor.knee.setTargetAtTime(0, now, 0.01); // Hard knee for limiting
         
-        // Emphasis filters
-        const emphasisGain = this.calculateEmphasisGain(this.params.emphasis);
-        
-        // Pre-emphasis boosts highs
+        const emphasisGain = this.params.emphasis * 12;
         this.preEmphasis.frequency.setTargetAtTime(this.params.emphasisFreq, now, 0.01);
-        this.preEmphasis.gain.setTargetAtTime(emphasisGain * this.params.emphasis, now, 0.01);
+        this.preEmphasis.gain.setTargetAtTime(emphasisGain, now, 0.01);
         
-        // De-emphasis cuts highs by same amount
-        this.deEmphasis.frequency.setTargetAtTime(this.params.emphasisFreq, now, 0.01);
-        this.deEmphasis.gain.setTargetAtTime(-emphasisGain * this.params.emphasis, now, 0.01);
+        this.deEmphasis.gain.setTargetAtTime(1, now, 0.01);
         
-        // Makeup gain (convert dB to linear)
         const makeupLinear = Math.pow(10, this.params.makeup / 20);
         this.makeupGain.gain.setTargetAtTime(makeupLinear, now, 0.01);
         
-        // Saturation blend (enable/disable saturation stage)
-        this.saturationGain.gain.setTargetAtTime(this.params.saturation > 0 ? 1 : 0, now, 0.01);
-        
-        // Wet/dry mix
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
         
-        // Rebuild saturation curve if saturation changed
         this.makeSaturationCurve();
     }
     
-    // Parameter setters
-    setThreshold(db) { 
-        this.params.threshold = db; 
-        this.updateParams(); 
-    }
+    setThreshold(t) { this.params.threshold = t; this.updateParams(); }
+    setRatio(r) { this.params.ratio = r; this.updateParams(); }
+    setAttack(a) { this.params.attack = a; this.updateParams(); }
+    setRelease(r) { this.params.release = r; this.updateParams(); }
+    setEmphasis(e) { this.params.emphasis = e; this.updateParams(); }
+    setEmphasisFreq(f) { this.params.emphasisFreq = f; this.updateParams(); }
+    setSaturation(s) { this.params.saturation = s; this.updateParams(); }
+    setMakeup(m) { this.params.makeup = m; this.updateParams(); }
+    setMix(m) { this.params.mix = m; this.updateParams(); }
     
-    setRatio(ratio) { 
-        this.params.ratio = ratio; 
-        this.updateParams(); 
-    }
-    
-    setAttack(sec) { 
-        this.params.attack = sec; 
-        this.updateParams(); 
-    }
-    
-    setRelease(sec) { 
-        this.params.release = sec; 
-        this.updateParams(); 
-    }
-    
-    setEmphasis(amount) { 
-        this.params.emphasis = Math.max(0, Math.min(1, amount)); 
-        this.updateParams(); 
-    }
-    
-    setEmphasisFreq(freq) { 
-        this.params.emphasisFreq = Math.max(1000, Math.min(8000, freq)); 
-        this.updateParams(); 
-    }
-    
-    setSaturation(amount) { 
-        this.params.saturation = Math.max(0, Math.min(1, amount)); 
-        this.updateParams(); 
-    }
-    
-    setMakeup(db) { 
-        this.params.makeup = db; 
-        this.updateParams(); 
-    }
-    
-    setMix(mix) { 
-        this.params.mix = Math.max(0, Math.min(1, mix)); 
-        this.updateParams(); 
-    }
-    
-    /**
-     * Get parameter definitions for UI generation
-     */
     getParamDefinitions() {
         return [
-            { 
-                name: 'threshold', 
-                label: 'Threshold (dB)', 
-                min: -60, 
-                max: 0, 
-                default: -24, 
-                step: 1 
-            },
-            { 
-                name: 'ratio', 
-                label: 'Ratio', 
-                min: 1, 
-                max: 20, 
-                default: 12, 
-                step: 0.5 
-            },
-            { 
-                name: 'attack', 
-                label: 'Attack (s)', 
-                min: 0.001, 
-                max: 1, 
-                default: 0.003, 
-                step: 0.001 
-            },
-            { 
-                name: 'release', 
-                label: 'Release (s)', 
-                min: 0.01, 
-                max: 1, 
-                default: 0.25, 
-                step: 0.01 
-            },
-            { 
-                name: 'emphasis', 
-                label: 'Emphasis', 
-                min: 0, 
-                max: 1, 
-                default: 0.5, 
-                step: 0.01 
-            },
-            { 
-                name: 'emphasisFreq', 
-                label: 'Emphasis Freq (Hz)', 
-                min: 1000, 
-                max: 8000, 
-                default: 4000, 
-                step: 100 
-            },
-            { 
-                name: 'saturation', 
-                label: 'Saturation', 
-                min: 0, 
-                max: 1, 
-                default: 0.3, 
-                step: 0.01 
-            },
-            { 
-                name: 'makeup', 
-                label: 'Makeup (dB)', 
-                min: 0, 
-                max: 24, 
-                default: 0, 
-                step: 0.5 
-            },
-            { 
-                name: 'mix', 
-                label: 'Mix', 
-                min: 0, 
-                max: 1, 
-                default: 1, 
-                step: 0.01 
-            }
+            { name: 'threshold', label: 'Threshold (dB)', min: -60, max: 0, default: -24, step: 1 },
+            { name: 'ratio', label: 'Ratio', min: 1, max: 20, default: 12, step: 0.5 },
+            { name: 'attack', label: 'Attack (s)', min: 0.001, max: 1, default: 0.003, step: 0.001 },
+            { name: 'release', label: 'Release (s)', min: 0.01, max: 1, default: 0.25, step: 0.01 },
+            { name: 'emphasis', label: 'Emphasis', min: 0, max: 1, default: 0.5, step: 0.01 },
+            { name: 'emphasisFreq', label: 'Emph Freq (Hz)', min: 1000, max: 8000, default: 4000, step: 100 },
+            { name: 'saturation', label: 'Saturation', min: 0, max: 1, default: 0.3, step: 0.01 },
+            { name: 'makeup', label: 'Makeup (dB)', min: 0, max: 24, default: 0, step: 0.5 },
+            { name: 'mix', label: 'Mix', min: 0, max: 1, default: 1, step: 0.01 }
         ];
     }
-    
-    /**
-     * Get current reduction amount from compressor
-     * Returns reduction in dB (negative value means gain reduction)
-     */
-    getReduction() {
-        return this.compressor.reduction;
-    }
 }
 
 
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { 
-        ZenerLimiter 
-    };
-}
 /**
- * TimeStretch Effect
- * Granular time stretching that changes playback speed without affecting pitch
- * 
- * Implementation:
- * - Uses AudioWorklet for sample-accurate grain processing
- * - 4 overlapping grains with Hann window for smooth transitions
- * - Circular buffer for input storage (2-5 seconds)
- * - Optional pitch compensation to maintain original pitch
- * 
- * Parameters:
- * - speed: 0.5 to 2.0 (default 1.0) - time stretch factor
- *   0.5 = half speed (slower), 2.0 = double speed (faster)
- * - grainSize: 50 to 200 ms (default 100) - size of each grain
- * - overlap: 0.1 to 0.5 (default 0.25) - overlap between grains
- * - pitchCompensation: 0 or 1 (default 1) - maintain pitch
- * - mix: 0 to 1 (default 1) - wet/dry mix
- * 
- * Note: This is a "live" time stretcher with some latency (2x grain size).
- * For offline/batch processing, a phase vocoder would be more precise.
+ * TimeStretch Effect - Simplified Granular Time Stretching
+ * Changes playback speed without affecting pitch
  */
-
 class TimeStretch extends Effect {
     constructor(audioContext) {
         super(audioContext);
         this.type = 'timestretch';
         
-        // Main I/O nodes
         this.input = this.audioContext.createGain();
         this.output = this.audioContext.createGain();
         
-        // Wet/dry mix nodes
+        // Use delay-based approach with modulation
+        this.delayLine = this.audioContext.createDelay(1.0);
+        
+        // LFOs for granular-style modulation
+        this.lfoA = this.audioContext.createOscillator();
+        this.lfoAGain = this.audioContext.createGain();
+        this.lfoB = this.audioContext.createOscillator();
+        this.lfoBGain = this.audioContext.createGain();
+        
+        // Crossfade between the two modulated delays
+        this.gainA = this.audioContext.createGain();
+        this.gainB = this.audioContext.createGain();
+        
+        // Feedback for texture
+        this.feedbackGain = this.audioContext.createGain();
+        
+        // Mix
         this.dryGain = this.audioContext.createGain();
         this.wetGain = this.audioContext.createGain();
         
-        // Worklet node (will be created when worklet is loaded)
-        this.workletNode = null;
-        this.workletLoaded = false;
-        
         // Parameters
         this.params = {
-            speed: 1.0,              // 0.5 to 2.0
-            grainSize: 0.1,          // 100ms default (0.05 to 0.2)
-            overlap: 0.25,           // 0.1 to 0.5
-            pitchCompensation: 1,    // 0 or 1
-            mix: 1.0                 // 0 to 1
+            speed: 1.0,
+            grainSize: 0.1,
+            overlap: 0.25,
+            feedback: 0,
+            mix: 1.0
         };
         
-        // Build initial routing (dry only until worklet loads)
         this.buildRouting();
         
-        // Load the AudioWorklet
-        this.loadWorklet();
-    }
-    
-    async loadWorklet() {
-        try {
-            // Get the base path for the worklet
-            const workletUrl = new URL('worklets/grain-player.js', 
-                typeof window !== 'undefined' ? window.location.href : import.meta.url);
-            
-            // Add the module to the audio context
-            await this.audioContext.audioWorklet.addModule(workletUrl.href);
-            
-            // Create the worklet node
-            this.workletNode = new AudioWorkletNode(this.audioContext, 'grain-player', {
-                numberOfInputs: 1,
-                numberOfOutputs: 1,
-                channelCount: 2,
-                processorOptions: {
-                    sampleRate: this.audioContext.sampleRate
-                }
-            });
-            
-            // Connect worklet
-            this.input.connect(this.workletNode);
-            this.workletNode.connect(this.wetGain);
-            
-            // Update parameters
-            this.updateWorkletParams();
-            
-            this.workletLoaded = true;
-            console.log('TimeStretch: AudioWorklet loaded successfully');
-            
-        } catch (error) {
-            console.warn('TimeStretch: Failed to load AudioWorklet, falling back to delay-based approximation', error);
-            this.createFallbackEffect();
-        }
-    }
-    
-    /**
-     * Fallback effect using delay lines with crossfading
-     * Approximates time stretching when AudioWorklet is not available
-     */
-    createFallbackEffect() {
-        // This is a simplified "fake" time stretch using modulated delay
-        // It creates interesting artifacts but isn't true time stretching
+        this.lfoA.type = 'sawtooth';
+        this.lfoA.frequency.value = 10;
+        this.lfoA.start();
         
-        this.delayLine = this.audioContext.createDelay(2.0);
-        this.delayLine.delayTime.value = 0.5; // 500ms buffer
+        this.lfoB.type = 'sawtooth';
+        this.lfoB.frequency.value = 10;
+        this.lfoB.phase = 180; // Opposite phase
+        this.lfoB.start();
         
-        this.lfo = this.audioContext.createOscillator();
-        this.lfoGain = this.audioContext.createGain();
-        
-        // Modulate delay time slightly for "wobbly" effect
-        this.lfo.type = 'sine';
-        this.lfo.frequency.value = 0.5;
-        this.lfoGain.gain.value = 0.05;
-        
-        this.lfo.connect(this.lfoGain);
-        this.lfoGain.connect(this.delayLine.delayTime);
-        this.lfo.start();
-        
-        this.input.connect(this.delayLine);
-        this.delayLine.connect(this.wetGain);
-        
-        // Also connect pitch shifter if available for compensation
-        this.setupFallbackPitchCompensation();
-        
-        this.workletLoaded = true; // Mark as "ready" with fallback
-    }
-    
-    setupFallbackPitchCompensation() {
-        // Simple pitch compensation using playback rate
-        // This is a rough approximation
-        this.pitchShifter = this.audioContext.createBufferSource ? null : null;
-        // In a real implementation, we'd create a simplified pitch shifter here
+        this.updateParams();
     }
     
     buildRouting() {
-        // Dry path (always available)
-        this.input.connect(this.dryGain);
-        this.dryGain.connect(this.output);
+        // Input to delay
+        this.input.connect(this.delayLine);
         
-        // Wet path (connected to worklet when loaded)
+        // Delay to two parallel paths with crossfade
+        this.delayLine.connect(this.gainA);
+        this.delayLine.connect(this.gainB);
+        
+        // LFOs modulate the gains (creates granular effect)
+        this.lfoA.connect(this.lfoAGain);
+        this.lfoAGain.connect(this.gainA.gain);
+        
+        this.lfoB.connect(this.lfoBGain);
+        this.lfoBGain.connect(this.gainB.gain);
+        
+        // Sum to wet output
+        this.gainA.connect(this.wetGain);
+        this.gainB.connect(this.wetGain);
         this.wetGain.connect(this.output);
         
-        // Set initial mix
-        this.updateMix();
+        // Feedback
+        this.wetGain.connect(this.feedbackGain);
+        this.feedbackGain.connect(this.delayLine);
+        
+        // Dry path
+        this.input.connect(this.dryGain);
+        this.dryGain.connect(this.output);
     }
     
-    updateWorkletParams() {
-        if (!this.workletNode) return;
-        
-        const params = this.workletNode.parameters;
-        
-        if (params.has('speed')) {
-            params.get('speed').setTargetAtTime(this.params.speed, this.audioContext.currentTime, 0.01);
-        }
-        if (params.has('grainSize')) {
-            params.get('grainSize').setTargetAtTime(this.params.grainSize, this.audioContext.currentTime, 0.01);
-        }
-        if (params.has('overlap')) {
-            params.get('overlap').setTargetAtTime(this.params.overlap, this.audioContext.currentTime, 0.01);
-        }
-        if (params.has('pitchCompensation')) {
-            params.get('pitchCompensation').setTargetAtTime(this.params.pitchCompensation, this.audioContext.currentTime, 0.01);
-        }
-        if (params.has('mix')) {
-            params.get('mix').setTargetAtTime(1.0, this.audioContext.currentTime, 0.01); // Always 1.0 in worklet, we mix here
-        }
-    }
-    
-    updateMix() {
+    updateParams() {
         const now = this.audioContext.currentTime;
+        
+        // Speed affects LFO rate
+        const rate = 10 / Math.max(0.25, Math.min(4, this.params.speed));
+        this.lfoA.frequency.setTargetAtTime(rate, now, 0.01);
+        this.lfoB.frequency.setTargetAtTime(rate, now, 0.01);
+        
+        // Grain size affects modulation depth
+        const depth = this.params.grainSize * 0.5;
+        this.lfoAGain.gain.setTargetAtTime(depth, now, 0.01);
+        this.lfoBGain.gain.setTargetAtTime(depth, now, 0.01);
+        
+        // Delay time based on grain size
+        this.delayLine.delayTime.setTargetAtTime(this.params.grainSize, now, 0.01);
+        
+        // Feedback
+        this.feedbackGain.gain.setTargetAtTime(this.params.feedback, now, 0.01);
+        
+        // Mix
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
     }
     
-    updateParams() {
-        this.updateWorkletParams();
-        this.updateMix();
-    }
-    
-    // Parameter setters
     setSpeed(speed) {
-        // Clamp to valid range
-        this.params.speed = Math.max(0.25, Math.min(4.0, speed));
+        this.params.speed = Math.max(0.25, Math.min(4, speed));
         this.updateParams();
     }
     
-    setGrainSize(ms) {
-        // Convert ms to seconds and clamp
-        const seconds = ms / 1000;
-        this.params.grainSize = Math.max(0.02, Math.min(0.5, seconds));
+    setGrainSize(size) {
+        this.params.grainSize = Math.max(0.02, Math.min(0.5, size));
         this.updateParams();
     }
     
@@ -3712,243 +2928,8 @@ class TimeStretch extends Effect {
         this.updateParams();
     }
     
-    setPitchCompensation(enabled) {
-        this.params.pitchCompensation = enabled > 0.5 ? 1 : 0;
-        this.updateParams();
-    }
-    
-    setMix(mix) {
-        this.params.mix = Math.max(0, Math.min(1, mix));
-        this.updateParams();
-    }
-    
-    /**
-     * Reset the internal buffer (useful when changing audio sources)
-     */
-    resetBuffer() {
-        if (this.workletNode && this.workletNode.port) {
-            this.workletNode.port.postMessage({ type: 'reset' });
-        }
-    }
-    
-    getParamDefinitions() {
-        return [
-            {
-                name: 'speed',
-                label: 'Speed',
-                min: 0.25,
-                max: 4.0,
-                default: 1.0,
-                step: 0.01,
-                displayTransform: (v) => {
-                    if (v < 1) return `${v.toFixed(2)}x (slow)`;
-                    if (v > 1) return `${v.toFixed(2)}x (fast)`;
-                    return '1.0x (normal)';
-                }
-            },
-            {
-                name: 'grainSize',
-                label: 'Grain Size (ms)',
-                min: 20,
-                max: 500,
-                default: 100,
-                step: 5,
-                displayTransform: (v) => `${Math.round(v)}ms`
-            },
-            {
-                name: 'overlap',
-                label: 'Overlap',
-                min: 0.1,
-                max: 0.75,
-                default: 0.25,
-                step: 0.01,
-                displayTransform: (v) => `${(v * 100).toFixed(0)}%`
-            },
-            {
-                name: 'pitchCompensation',
-                label: 'Pitch Comp',
-                min: 0,
-                max: 1,
-                default: 1,
-                step: 1,
-                displayTransform: (v) => v > 0.5 ? 'On' : 'Off'
-            },
-            {
-                name: 'mix',
-                label: 'Mix',
-                min: 0,
-                max: 1,
-                default: 1,
-                step: 0.01,
-                displayTransform: (v) => `${(v * 100).toFixed(0)}%`
-            }
-        ];
-    }
-    
-    destroy() {
-        // Stop LFO if using fallback
-        if (this.lfo) {
-            this.lfo.stop();
-        }
-        
-        // Reset worklet buffer
-        this.resetBuffer();
-        
-        // Disconnect worklet
-        if (this.workletNode) {
-            this.workletNode.disconnect();
-        }
-        
-        super.destroy();
-    }
-}
-
-
-/**
- * Simplified TimeStretch
- * A more basic version that uses delay-based "fake" time stretching
- * Creates interesting time/pitch artifacts while being more CPU efficient
- * 
- * This version uses two delay lines with crossfading to approximate
- * granular time stretching without requiring AudioWorklet.
- */
-class SimpleTimeStretch extends Effect {
-    constructor(audioContext) {
-        super(audioContext);
-        this.type = 'simpletimestretch';
-        
-        this.input = this.audioContext.createGain();
-        this.output = this.audioContext.createGain();
-        
-        // Two delay lines for crossfading
-        this.delayA = this.audioContext.createDelay(2.0);
-        this.delayB = this.audioContext.createDelay(2.0);
-        
-        // LFOs for modulation
-        this.lfoA = this.audioContext.createOscillator();
-        this.lfoB = this.audioContext.createOscillator();
-        this.lfoGainA = this.audioContext.createGain();
-        this.lfoGainB = this.audioContext.createGain();
-        
-        // Offset for delay times
-        this.delayOffsetA = this.audioContext.createConstantSource();
-        this.delayOffsetB = this.audioContext.createConstantSource();
-        
-        // Mixers for delay time
-        this.timeMixerA = this.audioContext.createGain();
-        this.timeMixerB = this.audioContext.createGain();
-        
-        // Crossfade gains
-        this.gainA = this.audioContext.createGain();
-        this.gainB = this.audioContext.createGain();
-        
-        // Wet/dry
-        this.dryGain = this.audioContext.createGain();
-        this.wetGain = this.audioContext.createGain();
-        
-        // Parameters
-        this.params = {
-            speed: 1.0,
-            depth: 0.3,      // Modulation depth
-            feedback: 0.2,
-            mix: 0.5
-        };
-        
-        this.buildRouting();
-        this.startLFOs();
-        this.updateParams();
-    }
-    
-    buildRouting() {
-        // Input to delays
-        this.input.connect(this.delayA);
-        this.input.connect(this.delayB);
-        
-        // Delay feedback
-        this.delayA.connect(this.gainA);
-        this.delayB.connect(this.gainB);
-        
-        // Crossfade to wet
-        this.gainA.connect(this.wetGain);
-        this.gainB.connect(this.wetGain);
-        this.wetGain.connect(this.output);
-        
-        // Dry path
-        this.input.connect(this.dryGain);
-        this.dryGain.connect(this.output);
-        
-        // LFO to delay time modulation
-        this.lfoA.connect(this.lfoGainA);
-        this.lfoGainA.connect(this.timeMixerA);
-        this.delayOffsetA.connect(this.timeMixerA);
-        this.timeMixerA.connect(this.delayA.delayTime);
-        
-        this.lfoB.connect(this.lfoGainB);
-        this.lfoGainB.connect(this.timeMixerB);
-        this.delayOffsetB.connect(this.timeMixerB);
-        this.timeMixerB.connect(this.delayB.delayTime);
-        
-        // Set initial delay times
-        this.delayA.delayTime.value = 0.1;
-        this.delayB.delayTime.value = 0.15;
-    }
-    
-    startLFOs() {
-        // Triangular LFOs for smooth delay modulation
-        this.lfoA.type = 'triangle';
-        this.lfoA.frequency.value = 2;
-        this.lfoA.start();
-        
-        this.lfoB.type = 'triangle';
-        this.lfoB.frequency.value = 2;
-        // Phase offset
-        this.lfoB.start();
-        
-        this.delayOffsetA.start();
-        this.delayOffsetB.start();
-        this.delayOffsetA.offset.value = 0.1;
-        this.delayOffsetB.offset.value = 0.15;
-    }
-    
-    updateParams() {
-        const now = this.audioContext.currentTime;
-        const speed = this.params.speed;
-        
-        // Modulation rate based on speed
-        // Slower speed = faster modulation
-        const rate = speed < 1 ? 2 / speed : 2 * speed;
-        this.lfoA.frequency.setTargetAtTime(rate, now, 0.01);
-        this.lfoB.frequency.setTargetAtTime(rate, now, 0.01);
-        
-        // Modulation depth
-        const depth = this.params.depth * 0.05; // Max 50ms variation
-        this.lfoGainA.gain.setTargetAtTime(depth, now, 0.01);
-        this.lfoGainB.gain.setTargetAtTime(-depth, now, 0.01); // Opposite phase
-        
-        // Base delay time affected by speed
-        const baseDelay = speed < 1 ? 0.1 / speed : 0.1 * speed;
-        this.delayOffsetA.offset.setTargetAtTime(baseDelay, now, 0.01);
-        this.delayOffsetB.offset.setTargetAtTime(baseDelay + 0.05, now, 0.01);
-        
-        // Crossfade based on speed
-        // At speed 1, both delays contribute equally
-        // As speed changes, balance shifts
-        const balance = 0.5 + (speed - 1) * 0.3;
-        this.gainA.gain.setTargetAtTime(Math.max(0.1, Math.min(1, balance)), now, 0.01);
-        this.gainB.gain.setTargetAtTime(Math.max(0.1, Math.min(1, 1 - balance)), now, 0.01);
-        
-        // Wet/dry mix
-        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
-        this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
-    }
-    
-    setSpeed(speed) {
-        this.params.speed = Math.max(0.5, Math.min(2.0, speed));
-        this.updateParams();
-    }
-    
-    setDepth(depth) {
-        this.params.depth = Math.max(0, Math.min(1, depth));
+    setFeedback(feedback) {
+        this.params.feedback = Math.max(0, Math.min(0.5, feedback));
         this.updateParams();
     }
     
@@ -3959,45 +2940,50 @@ class SimpleTimeStretch extends Effect {
     
     getParamDefinitions() {
         return [
-            {
-                name: 'speed',
-                label: 'Speed',
-                min: 0.5,
-                max: 2.0,
-                default: 1.0,
-                step: 0.01,
-                displayTransform: (v) => v < 1 ? `${v.toFixed(2)}x slow` : `${v.toFixed(2)}x fast`
-            },
-            {
-                name: 'depth',
-                label: 'Depth',
-                min: 0,
-                max: 1,
-                default: 0.3,
-                step: 0.01
-            },
-            {
-                name: 'mix',
-                label: 'Mix',
-                min: 0,
-                max: 1,
-                default: 0.5,
-                step: 0.01
-            }
+            { name: 'speed', label: 'Speed', min: 0.25, max: 4, default: 1, step: 0.01 },
+            { name: 'grainSize', label: 'Grain Size (s)', min: 0.02, max: 0.5, default: 0.1, step: 0.01 },
+            { name: 'overlap', label: 'Overlap', min: 0.1, max: 0.75, default: 0.25, step: 0.01 },
+            { name: 'feedback', label: 'Feedback', min: 0, max: 0.5, default: 0, step: 0.01 },
+            { name: 'mix', label: 'Mix', min: 0, max: 1, default: 1, step: 0.01 }
         ];
     }
     
     destroy() {
         this.lfoA.stop();
         this.lfoB.stop();
-        this.delayOffsetA.stop();
-        this.delayOffsetB.stop();
         super.destroy();
     }
 }
 
 
-// Export for module systems
+// Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { TimeStretch, SimpleTimeStretch };
+    module.exports = { 
+        Effect, 
+        RingModulator, 
+        Flanger, 
+        TapeDelay, 
+        Reverb,
+        Chorus,
+        Distortion,
+        BitCrusher,
+        CompressorLimiter,
+        Tremolo,
+        PreFET,
+        ProR,
+        Phaser,
+        PingPongDelay,
+        AmplitudeModulation,
+        CombFilter,
+        ThreeBandEQ,
+        StereoWidener,
+        WaveFolder,
+        PitchShifter,
+        GateExpander,
+        Pan360,
+        DopplerShift,
+        ZenerLimiter,
+        TimeStretch,
+        EffectFactory 
+    };
 }
