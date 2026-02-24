@@ -143,38 +143,38 @@ class SynthEngine {
         const generator = this.generators[channelIndex];
         if (!generator) return;
         
-        const wasPlaying = generator.getIsPlaying();
-        generator.stop();
+        const outputNode = generator.getOutput();
+        if (!outputNode) return;
         
-        let currentNode = generator.getOutput();
+        // Disconnect output from wherever it was connected
+        try {
+            outputNode.disconnect();
+        } catch (e) {
+            // Might not be connected, that's ok
+        }
+        
         const effects = this.effectChains[channelIndex].filter(e => e !== null);
         
         if (effects.length > 0) {
-            currentNode.disconnect();
-            currentNode.connect(effects[0].getInput());
+            // Connect generator -> first effect
+            outputNode.connect(effects[0].getInput());
             
+            // Chain effects together
             for (let i = 0; i < effects.length - 1; i++) {
-                effects[i].disconnect();
+                try {
+                    effects[i].disconnect();
+                } catch (e) {}
                 effects[i].connect(effects[i + 1].getInput());
             }
             
-            effects[effects.length - 1].disconnect();
+            // Connect last effect -> master
+            try {
+                effects[effects.length - 1].disconnect();
+            } catch (e) {}
             effects[effects.length - 1].connect(this.masterGain);
         } else {
-            currentNode.disconnect();
-            currentNode.connect(this.masterGain);
-        }
-        
-        if (wasPlaying && this.channelSettings[channelIndex].enabled) {
-            // For generators that need special restart
-            if (generator.createOscillator) {
-                generator.createOscillator();
-            } else if (generator.createNoiseNode) {
-                generator.createNoiseNode();
-            } else {
-                // Default: restart the generator
-                generator.start(this.masterGain);
-            }
+            // No effects - connect directly to master
+            outputNode.connect(this.masterGain);
         }
     }
 
