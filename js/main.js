@@ -171,6 +171,9 @@ class SynthEngine {
                 generator.createOscillator();
             } else if (generator.createNoiseNode) {
                 generator.createNoiseNode();
+            } else {
+                // Default: restart the generator
+                generator.start(this.masterGain);
             }
         }
     }
