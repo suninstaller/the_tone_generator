@@ -433,12 +433,12 @@ class SynthEngine {
 // Initialize the application when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     const synth = new SynthEngine();
-    const ui = new UIManager(synth);
     const midi = new MIDIController(synth);
+    const ui = new UIManager(synth);
     
     window.synth = synth;
-    window.ui = ui;
     window.midi = midi;
+    window.ui = ui;
     
     console.log('Tone Generator initialized');
 });
