@@ -639,48 +639,6 @@ class BinauralBeatsGenerator {
  * Use this factory to create generators. Add new generator types here.
  */
 
-const GeneratorFactory = {
-    create(type, audioContext) {
-        switch (type) {
-            case 'fm':
-                return new FMSynthesizer(audioContext);
-            case 'granular':
-                return new GranularSynthesizer(audioContext);
-            case 'infrasound':
-                return new InfrasoundGenerator(audioContext);
-            case 'binaural':
-                return new BinauralBeatsGenerator(audioContext);
-            case 'noise':
-                return new NoiseGenerator(audioContext);
-            case 'sine':
-            case 'sawtooth':
-            case 'triangle':
-            case 'square':
-            default:
-                const gen = new ToneGenerator(audioContext);
-                gen.setWaveform(type);
-                return gen;
-        }
-    },
-
-    getGeneratorTypes() {
-        return [
-            { id: 'sine', name: 'Sine', hasDuty: false },
-            { id: 'sawtooth', name: 'Sawtooth', hasDuty: false },
-            { id: 'triangle', name: 'Triangle', hasDuty: false },
-            { id: 'square', name: 'Square', hasDuty: true },
-            { id: 'noise', name: 'Noise', hasDuty: false },
-            { id: 'binaural', name: '🧠 Binaural', hasDuty: false },
-            { id: 'fm', name: '🎹 FM Synth', hasDuty: false },
-            { id: 'granular', name: '☁️ Granular', hasDuty: false },
-            { id: 'infrasound', name: '🔊 Infrasound', hasDuty: false }
-        ];
-    }
-};
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-
 
 // ============================================================================
 // FM Synthesizer
@@ -868,21 +826,6 @@ class FMSynthesizer {
     }
 }
 
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { 
-        ToneGenerator, 
-        NoiseGenerator,
-        BinauralBeatsGenerator,
-        FMSynthesizer,
-        GranularSynthesizer,
-        InfrasoundGenerator,
-        GeneratorFactory 
-    };
-}
-
-}
 /**
  * ============================================================================
  * Granular Synthesizer
@@ -1144,11 +1087,6 @@ class GranularSynthesizer {
     }
 }
 
-
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { GranularSynthesizer };
-}
 /**
  * ============================================================================
  * Infrasound Generator
@@ -1470,7 +1408,58 @@ class InfrasoundGenerator {
 }
 
 
+// ============================================================================
+// Generator Factory
+// ============================================================================
+
+const GeneratorFactory = {
+    create(type, audioContext) {
+        switch (type) {
+            case 'infrasound':
+                return new InfrasoundGenerator(audioContext);
+            case 'fm':
+                return new FMSynthesizer(audioContext);
+            case 'granular':
+                return new GranularSynthesizer(audioContext);
+            case 'binaural':
+                return new BinauralBeatsGenerator(audioContext);
+            case 'noise':
+                return new NoiseGenerator(audioContext);
+            case 'sine':
+            case 'sawtooth':
+            case 'triangle':
+            case 'square':
+            default:
+                const gen = new ToneGenerator(audioContext);
+                gen.setWaveform(type);
+                return gen;
+        }
+    },
+
+    getGeneratorTypes() {
+        return [
+            { id: 'sine', name: 'Sine', hasDuty: false },
+            { id: 'sawtooth', name: 'Sawtooth', hasDuty: false },
+            { id: 'triangle', name: 'Triangle', hasDuty: false },
+            { id: 'square', name: 'Square', hasDuty: true },
+            { id: 'noise', name: 'Noise', hasDuty: false },
+            { id: 'binaural', name: '🧠 Binaural', hasDuty: false },
+            { id: 'fm', name: '🎹 FM Synth', hasDuty: false },
+            { id: 'granular', name: '☁️ Granular', hasDuty: false },
+            { id: 'infrasound', name: '🔊 Infrasound', hasDuty: false }
+        ];
+    }
+};
+
 // Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { InfrasoundGenerator };
+    module.exports = { 
+        ToneGenerator, 
+        NoiseGenerator,
+        BinauralBeatsGenerator,
+        FMSynthesizer,
+        GranularSynthesizer,
+        InfrasoundGenerator,
+        GeneratorFactory 
+    };
 }
