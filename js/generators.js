@@ -644,6 +644,8 @@ const GeneratorFactory = {
         switch (type) {
             case 'fm':
                 return new FMSynthesizer(audioContext);
+            case 'granular':
+                return new GranularSynthesizer(audioContext);
             case 'binaural':
                 return new BinauralBeatsGenerator(audioContext);
             case 'noise':
@@ -667,7 +669,8 @@ const GeneratorFactory = {
             { id: 'square', name: 'Square', hasDuty: true },
             { id: 'noise', name: 'Noise', hasDuty: false },
             { id: 'binaural', name: '🧠 Binaural', hasDuty: false },
-            { id: 'fm', name: '🎹 FM Synth', hasDuty: false }
+            { id: 'fm', name: '🎹 FM Synth', hasDuty: false },
+            { id: 'granular', name: '☁️ Granular', hasDuty: false }
         ];
     }
 };
@@ -870,8 +873,275 @@ if (typeof module !== 'undefined' && module.exports) {
         NoiseGenerator,
         BinauralBeatsGenerator,
         FMSynthesizer,
+        GranularSynthesizer,
         GeneratorFactory 
     };
 }
 
+}
+/**
+ * ============================================================================
+ * Granular Synthesizer
+ * ============================================================================
+ * Creates "clouds" of tiny sound grains (10-100ms each) with random variations
+ * to create textured, evolving soundscapes.
+ * 
+ * Since we don't have sample loading, grains are generated using oscillators
+ * with short envelopes.
+ * 
+ * Architecture:
+ * - Grain Generator: Creates short oscillator bursts
+ * - Parameters per grain: random frequency, start time, duration, pan position
+ * - Continuous grain spawning using setInterval
+ */
+
+class GranularSynthesizer {
+    constructor(audioContext) {
+        this.audioContext = audioContext;
+        
+        // Output chain
+        this.outputGain = null;
+        this.destination = null;
+        
+        // Grain spawning
+        this.grainInterval = null;
+        this.activeGrains = []; // Track active grain nodes for cleanup
+        
+        // State
+        this.isPlaying = false;
+        this.volume = 0.5;
+        
+        // Parameters
+        this.density = 20;          // 1 to 100 grains/second
+        this.grainSize = 50;        // 10 to 200 ms - duration of each grain
+        this.spray = 100;           // 0 to 1000 Hz - frequency randomization spread
+        this.pitchVariation = 0.1;  // 0 to 1 - pitch randomization amount
+        this.stereoSpread = 0.5;    // 0 to 1 - stereo width of grains
+        this.waveform = 'sine';     // 'sine', 'triangle', 'sawtooth', 'square'
+        this.baseFreq = 440;        // 20 to 2000 Hz
+    }
+
+    /**
+     * Create a single grain with randomized parameters
+     */
+    createGrain() {
+        if (!this.isPlaying) return;
+        
+        const now = this.audioContext.currentTime;
+        
+        // Randomize grain parameters
+        const duration = (this.grainSize / 1000) * (0.5 + Math.random());
+        const attack = duration * 0.1; // 10% attack
+        const grainVolume = this.volume * (0.5 + Math.random() * 0.5); // Varying amplitude
+        
+        // Frequency randomization (spray + pitch variation)
+        const sprayOffset = (Math.random() - 0.5) * this.spray;
+        const pitchMult = 1 + (Math.random() - 0.5) * this.pitchVariation;
+        const frequency = Math.max(20, (this.baseFreq + sprayOffset) * pitchMult);
+        
+        // Stereo position
+        const panValue = (Math.random() - 0.5) * 2 * this.stereoSpread;
+        
+        // Create audio nodes
+        const grain = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        const panner = this.audioContext.createStereoPanner();
+        
+        // Configure oscillator
+        grain.type = this.waveform;
+        grain.frequency.value = frequency;
+        
+        // Configure envelope (attack and decay)
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(grainVolume, now + attack);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+        
+        // Configure panner
+        panner.pan.value = panValue;
+        
+        // Connect chain: grain -> gain -> panner -> output
+        grain.connect(gain);
+        gain.connect(panner);
+        panner.connect(this.outputGain);
+        
+        // Track this grain for potential cleanup
+        const grainData = { grain, gain, panner };
+        this.activeGrains.push(grainData);
+        
+        // Start and schedule stop
+        grain.start(now);
+        grain.stop(now + duration);
+        
+        // Cleanup after grain finishes
+        setTimeout(() => {
+            try {
+                grain.disconnect();
+                gain.disconnect();
+                panner.disconnect();
+            } catch (e) {
+                // Ignore disconnection errors
+            }
+            // Remove from active grains
+            const index = this.activeGrains.indexOf(grainData);
+            if (index > -1) {
+                this.activeGrains.splice(index, 1);
+            }
+        }, duration * 1000 + 10);
+    }
+
+    /**
+     * Start the grain spawning loop
+     */
+    startGrainLoop() {
+        // Calculate interval based on density (grains per second)
+        const intervalMs = 1000 / this.density;
+        
+        // Create grains continuously
+        this.grainInterval = setInterval(() => {
+            if (this.isPlaying) {
+                this.createGrain();
+            }
+        }, intervalMs);
+    }
+
+    /**
+     * Create output gain node
+     */
+    createOutput() {
+        if (!this.outputGain) {
+            this.outputGain = this.audioContext.createGain();
+            this.outputGain.gain.value = this.volume;
+        }
+        return this.outputGain;
+    }
+
+    start(destination) {
+        if (this.isPlaying) return;
+        
+        this.destination = destination;
+        const output = this.createOutput();
+        
+        if (destination) {
+            output.connect(destination);
+        }
+        
+        this.isPlaying = true;
+        
+        // Start spawning grains
+        this.startGrainLoop();
+        
+        // Create initial burst of grains for immediate sound
+        const initialGrains = Math.min(this.density / 5, 10);
+        for (let i = 0; i < initialGrains; i++) {
+            setTimeout(() => this.createGrain(), i * 10);
+        }
+    }
+
+    stop() {
+        if (!this.isPlaying) return;
+        
+        this.isPlaying = false;
+        
+        // Stop grain spawning
+        if (this.grainInterval) {
+            clearInterval(this.grainInterval);
+            this.grainInterval = null;
+        }
+        
+        // Smooth fade out
+        if (this.outputGain) {
+            const now = this.audioContext.currentTime;
+            this.outputGain.gain.setValueAtTime(this.outputGain.gain.value, now);
+            this.outputGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        }
+        
+        // Cleanup all active grains after fade out
+        setTimeout(() => {
+            this.activeGrains.forEach(({ grain, gain, panner }) => {
+                try {
+                    grain.stop();
+                    grain.disconnect();
+                    gain.disconnect();
+                    panner.disconnect();
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+            });
+            this.activeGrains = [];
+        }, 120);
+    }
+
+    /**
+     * Update the grain spawning interval when density changes
+     */
+    updateGrainInterval() {
+        if (this.isPlaying && this.grainInterval) {
+            clearInterval(this.grainInterval);
+            this.startGrainLoop();
+        }
+    }
+
+    // Parameter setters
+    
+    setDensity(value) {
+        this.density = Math.max(1, Math.min(100, value));
+        this.updateGrainInterval();
+    }
+
+    setGrainSize(value) {
+        this.grainSize = Math.max(10, Math.min(200, value));
+    }
+
+    setSpray(value) {
+        this.spray = Math.max(0, Math.min(1000, value));
+    }
+
+    setPitchVariation(value) {
+        this.pitchVariation = Math.max(0, Math.min(1, value));
+    }
+
+    setStereoSpread(value) {
+        this.stereoSpread = Math.max(0, Math.min(1, value));
+    }
+
+    setWaveform(type) {
+        const validTypes = ['sine', 'triangle', 'sawtooth', 'square'];
+        if (validTypes.includes(type)) {
+            this.waveform = type;
+        }
+    }
+
+    setBaseFreq(value) {
+        this.baseFreq = Math.max(20, Math.min(2000, value));
+    }
+
+    setVolume(vol) {
+        this.volume = Math.max(0, Math.min(1, vol));
+        if (this.outputGain) {
+            const now = this.audioContext.currentTime;
+            this.outputGain.gain.setTargetAtTime(this.volume, now, 0.01);
+        }
+    }
+
+    getOutput() {
+        return this.outputGain;
+    }
+
+    getIsPlaying() {
+        return this.isPlaying;
+    }
+
+    destroy() {
+        this.stop();
+        if (this.outputGain) {
+            this.outputGain.disconnect();
+            this.outputGain = null;
+        }
+    }
+}
+
+
+// Export for use in other modules
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { GranularSynthesizer };
 }

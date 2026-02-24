@@ -1763,6 +1763,8 @@ const EffectFactory = {
                 return new WaveFolder(audioContext);
             case 'pitch':
                 return new PitchShifter(audioContext);
+            case 'gate':
+                return new GateExpander(audioContext);
             case 'none':
             default:
                 return null;
@@ -1790,7 +1792,8 @@ const EffectFactory = {
             { id: 'eq', name: '🎛️ 3-Band EQ' },
             { id: 'widener', name: '↔️ Widener' },
             { id: 'wavefolder', name: '〰️ Wave Folder' },
-            { id: 'pitch', name: '🔼 Pitch Shifter' }
+            { id: 'pitch', name: '🔼 Pitch Shifter' },
+            { id: 'gate', name: '🚪 Gate/Expander' }
         ];
     }
 };
@@ -1818,6 +1821,7 @@ if (typeof module !== 'undefined' && module.exports) {
         StereoWidener,
         WaveFolder,
         PitchShifter,
+        GateExpander,
         EffectFactory 
     };
 }
@@ -2120,3 +2124,295 @@ class PitchShifter extends Effect {
 }
 
 
+/**
+ * Gate/Expander Effect
+ * Noise gate that cuts off sound when it falls below a threshold.
+ * Expander mode reduces the volume of quieter sounds (opposite of compressor).
+ * 
+ * Implementation uses a custom envelope follower for smooth transitions:
+ * 1. Analyze input level using an AnalyserNode
+ * 2. When level < threshold: close gate (reduce gain by ratio amount)
+ * 3. When level > threshold: open gate (restore gain)
+ * 4. Attack: time to open when signal exceeds threshold
+ * 5. Release: time to close when signal drops below threshold
+ * 6. Hold: minimum time gate stays open after signal drops
+ */
+
+class GateExpander extends Effect {
+    constructor(audioContext) {
+        super(audioContext);
+        this.type = 'gate';
+
+        this.input = this.audioContext.createGain();
+        this.output = this.audioContext.createGain();
+
+        // Sidechain input for level detection
+        this.detectorInput = this.audioContext.createGain();
+        
+        // Analyser for level detection
+        this.analyser = this.audioContext.createAnalyser();
+        this.analyser.fftSize = 256;
+        this.analyser.smoothingTimeConstant = 0.1;
+        
+        // Gate gain control
+        this.gateGain = this.audioContext.createGain();
+        this.gateGain.gain.value = 1.0;
+        
+        // Wet/dry mix
+        this.dryGain = this.audioContext.createGain();
+        this.wetGain = this.audioContext.createGain();
+        
+        // Parameters
+        this.params = {
+            threshold: -40,     // dB, level where gate opens (-60 to 0)
+            attack: 0.01,       // seconds, time to open (0.0001 to 0.1)
+            hold: 0.1,          // seconds, minimum open time (0.01 to 1)
+            release: 0.1,       // seconds, time to close (0.01 to 1)
+            ratio: 4,           // expansion ratio 1:1 to 1:10 (higher = more reduction)
+            hysteresis: 2,      // dB, difference between open and close thresholds
+            mix: 1.0            // wet/dry mix (0 to 1)
+        };
+
+        // Internal state
+        this.isOpen = false;
+        this.holdEndTime = 0;
+        this.dataArray = new Float32Array(this.analyser.frequencyBinCount);
+        
+        // Build routing
+        this.buildRouting();
+        
+        // Start the envelope follower
+        this.startEnvelopeFollower();
+        
+        this.updateParams();
+    }
+
+    buildRouting() {
+        // Input splits to detector and signal path
+        this.input.connect(this.detectorInput);
+        this.input.connect(this.gateGain);
+        
+        // Detector path: input -> analyser
+        this.detectorInput.connect(this.analyser);
+        
+        // Signal path: input -> gateGain -> wet/dry mix -> output
+        this.gateGain.connect(this.wetGain);
+        this.wetGain.connect(this.output);
+        
+        // Dry path
+        this.input.connect(this.dryGain);
+        this.dryGain.connect(this.output);
+    }
+
+    /**
+     * Convert dB to linear gain
+     */
+    dbToLinear(db) {
+        return Math.pow(10, db / 20);
+    }
+
+    /**
+     * Get current input level in dB
+     */
+    getInputLevel() {
+        this.analyser.getFloatTimeDomainData(this.dataArray);
+        
+        // Calculate RMS level
+        let sum = 0;
+        for (let i = 0; i < this.dataArray.length; i++) {
+            sum += this.dataArray[i] * this.dataArray[i];
+        }
+        const rms = Math.sqrt(sum / this.dataArray.length);
+        
+        // Convert to dB, with floor to prevent log(0)
+        const db = 20 * Math.log10(Math.max(rms, 0.00001));
+        return db;
+    }
+
+    /**
+     * Start the envelope follower loop
+     * Uses requestAnimationFrame for smooth gate operation
+     */
+    startEnvelopeFollower() {
+        const processEnvelope = () => {
+            if (this.destroyed) return;
+            
+            const now = this.audioContext.currentTime;
+            const level = this.getInputLevel();
+            
+            // Calculate open and close thresholds with hysteresis
+            const openThreshold = this.params.threshold;
+            const closeThreshold = this.params.threshold - this.params.hysteresis;
+            
+            // Calculate target gain based on level and ratio
+            // When gate is closed, gain is reduced by ratio amount
+            // Ratio 4 means 1:4 expansion (signal below threshold is attenuated 4:1)
+            const closedGain = 1 / this.params.ratio;
+            
+            let targetGain;
+            
+            if (this.isOpen) {
+                // Gate is currently open
+                if (level < closeThreshold) {
+                    // Signal dropped below close threshold
+                    if (now >= this.holdEndTime) {
+                        // Hold time expired, start closing
+                        this.isOpen = false;
+                        targetGain = closedGain;
+                    } else {
+                        // Still in hold time, stay open
+                        targetGain = 1.0;
+                    }
+                } else {
+                    // Signal still above close threshold, stay open
+                    targetGain = 1.0;
+                    // Extend hold time while signal is strong
+                    this.holdEndTime = now + this.params.hold;
+                }
+            } else {
+                // Gate is currently closed
+                if (level > openThreshold) {
+                    // Signal exceeded open threshold
+                    this.isOpen = true;
+                    this.holdEndTime = now + this.params.hold;
+                    targetGain = 1.0;
+                } else {
+                    // Signal still below threshold, stay closed
+                    targetGain = closedGain;
+                }
+            }
+
+            // Apply smooth transition using setTargetAtTime
+            // Attack time for opening, release time for closing
+            const timeConstant = this.isOpen ? this.params.attack : this.params.release;
+            
+            // Calculate actual target based on mix
+            // When mix is 0, gate has no effect (gain = 1)
+            // When mix is 1, full gate effect
+            const mixedTarget = 1.0 - this.params.mix * (1.0 - targetGain);
+            
+            // Apply the gain change
+            this.gateGain.gain.setTargetAtTime(mixedTarget, now, timeConstant / 3);
+            
+            // Schedule next frame
+            requestAnimationFrame(processEnvelope);
+        };
+        
+        // Start the loop
+        requestAnimationFrame(processEnvelope);
+    }
+
+    updateParams() {
+        const now = this.audioContext.currentTime;
+        
+        // Update wet/dry mix
+        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
+    }
+
+    // Parameter setters
+    setThreshold(db) { 
+        this.params.threshold = db; 
+        // Don't call updateParams - threshold is handled in envelope follower
+    }
+    
+    setAttack(ms) { 
+        this.params.attack = ms / 1000; // Convert ms to seconds
+    }
+    
+    setHold(ms) { 
+        this.params.hold = ms / 1000; // Convert ms to seconds
+    }
+    
+    setRelease(ms) { 
+        this.params.release = ms / 1000; // Convert ms to seconds
+    }
+    
+    setRatio(ratio) { 
+        this.params.ratio = ratio; 
+    }
+    
+    setHysteresis(db) { 
+        this.params.hysteresis = db; 
+    }
+    
+    setMix(mix) { 
+        this.params.mix = mix; 
+        this.updateParams(); 
+    }
+
+    getParamDefinitions() {
+        return [
+            { 
+                name: 'threshold', 
+                label: 'Threshold (dB)', 
+                min: -60, 
+                max: 0, 
+                default: -40, 
+                step: 1 
+            },
+            { 
+                name: 'attack', 
+                label: 'Attack (ms)', 
+                min: 0.1, 
+                max: 100, 
+                default: 10, 
+                step: 0.1 
+            },
+            { 
+                name: 'hold', 
+                label: 'Hold (ms)', 
+                min: 10, 
+                max: 1000, 
+                default: 100, 
+                step: 10 
+            },
+            { 
+                name: 'release', 
+                label: 'Release (ms)', 
+                min: 10, 
+                max: 1000, 
+                default: 100, 
+                step: 10 
+            },
+            { 
+                name: 'ratio', 
+                label: 'Ratio (1:x)', 
+                min: 1, 
+                max: 10, 
+                default: 4, 
+                step: 0.5 
+            },
+            { 
+                name: 'hysteresis', 
+                label: 'Hysteresis (dB)', 
+                min: 0, 
+                max: 12, 
+                default: 2, 
+                step: 0.5 
+            },
+            { 
+                name: 'mix', 
+                label: 'Mix', 
+                min: 0, 
+                max: 1, 
+                default: 1, 
+                step: 0.01 
+            }
+        ];
+    }
+
+    destroy() {
+        this.destroyed = true;
+        
+        // Disconnect all nodes
+        if (this.input) this.input.disconnect();
+        if (this.detectorInput) this.detectorInput.disconnect();
+        if (this.gateGain) this.gateGain.disconnect();
+        if (this.analyser) this.analyser.disconnect();
+        if (this.dryGain) this.dryGain.disconnect();
+        if (this.wetGain) this.wetGain.disconnect();
+        
+        super.destroy();
+    }
+}
