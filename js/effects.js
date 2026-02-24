@@ -1765,6 +1765,8 @@ const EffectFactory = {
                 return new PitchShifter(audioContext);
             case 'gate':
                 return new GateExpander(audioContext);
+            case 'pan360':
+                return new Pan360(audioContext);
             case 'none':
             default:
                 return null;
@@ -1793,7 +1795,8 @@ const EffectFactory = {
             { id: 'widener', name: '↔️ Widener' },
             { id: 'wavefolder', name: '〰️ Wave Folder' },
             { id: 'pitch', name: '🔼 Pitch Shifter' },
-            { id: 'gate', name: '🚪 Gate/Expander' }
+            { id: 'gate', name: '🚪 Gate/Expander' },
+            { id: 'pan360', name: '🔄 360 Pan' }
         ];
     }
 };
@@ -1822,6 +1825,7 @@ if (typeof module !== 'undefined' && module.exports) {
         WaveFolder,
         PitchShifter,
         GateExpander,
+        Pan360,
         EffectFactory 
     };
 }
@@ -2415,4 +2419,171 @@ class GateExpander extends Effect {
         
         super.destroy();
     }
+}
+/**
+ * 360 Pan (Surround Panner) Effect
+ * Creates a rotating/positioning effect that moves the sound around the listener
+ * in a full 360-degree circle. Uses StereoPannerNode with an LFO for continuous rotation.
+ *
+ * Parameters:
+ * - rate: 0 to 10 Hz (default 0.5) - rotation speed
+ * - width: 0 to 1 (default 1) - pan amount (1 = full 360, 0.5 = 180°, 0 = center)
+ * - manual: -1 to 1 (default 0) - manual position override (when rate = 0)
+ * - direction: 0 or 1 (default 0) - 0 = clockwise, 1 = counter-clockwise
+ * - mix: 0 to 1 (default 1) - wet/dry mix
+ *
+ * Pan Mapping:
+ * - 0° = Center (0)
+ * - 90° = Full Right (1)
+ * - 180° = Center (0) - back
+ * - 270° = Full Left (-1)
+ * - 360° = Back to Center
+ *
+ * Signal Flow:
+ * Input -> StereoPanner -> Wet Gain -> Output
+ *              ↓
+ *            LFO (modulates pan position)
+ */
+
+class Pan360 extends Effect {
+    constructor(audioContext) {
+        super(audioContext);
+        this.type = '360pan';
+
+        this.input = this.audioContext.createGain();
+        this.output = this.audioContext.createGain();
+
+        // Core stereo panner
+        this.panner = this.audioContext.createStereoPanner();
+
+        // LFO for continuous rotation
+        this.lfo = this.audioContext.createOscillator();
+        this.lfoGain = this.audioContext.createGain();
+        this.lfoOffset = this.audioContext.createConstantSource();
+
+        // Manual position control (used when rate = 0)
+        this.manualGain = this.audioContext.createGain();
+
+        // Wet/dry mix
+        this.dryGain = this.audioContext.createGain();
+        this.wetGain = this.audioContext.createGain();
+
+        // Parameters
+        this.params = {
+            rate: 0.5,      // LFO rate in Hz (0-10)
+            width: 1,       // Pan width (0-1, 1 = full 360°)
+            manual: 0,      // Manual position override (-1 to 1)
+            direction: 0,   // 0 = clockwise, 1 = counter-clockwise
+            mix: 1          // Wet/dry mix (0-1)
+        };
+
+        // Build signal routing
+        this.buildRouting();
+
+        // Configure and start LFO
+        this.lfo.type = 'sine';
+        this.lfo.frequency.value = this.params.rate;
+        this.lfo.start();
+
+        // Start constant offset source
+        this.lfoOffset.start();
+        this.lfoOffset.offset.value = 0;
+
+        this.updateParams();
+    }
+
+    buildRouting() {
+        // Input splits to dry and wet paths
+        this.input.connect(this.dryGain);
+        this.input.connect(this.panner);
+
+        // Wet path through panner
+        this.panner.connect(this.wetGain);
+        this.wetGain.connect(this.output);
+
+        // Dry path
+        this.dryGain.connect(this.output);
+
+        // LFO controls the panner position
+        // LFO -> lfoGain -> panner.pan (modulates around center)
+        this.lfo.connect(this.lfoGain);
+        this.lfoGain.connect(this.panner.pan);
+
+        // Manual position control
+        this.manualGain.connect(this.panner.pan);
+    }
+
+    updateParams() {
+        const now = this.audioContext.currentTime;
+
+        // Update LFO rate
+        this.lfo.frequency.setTargetAtTime(this.params.rate, now, 0.01);
+
+        // Width controls the pan range
+        // width 1: pan goes from -1 to +1 (full 360°)
+        // width 0.5: pan goes from -0.5 to +0.5 (180°)
+        // width 0: pan stays at center
+        this.lfoGain.gain.setTargetAtTime(this.params.width, now, 0.01);
+
+        // Manual position override
+        // When rate is 0, manual controls the static position
+        // When rate > 0, manual adds an offset to the LFO modulation
+        this.manualGain.gain.setTargetAtTime(this.params.manual, now, 0.01);
+
+        // Direction: clockwise vs counter-clockwise
+        // Invert LFO gain for counter-clockwise rotation
+        const directionMultiplier = this.params.direction === 1 ? -1 : 1;
+        this.lfoGain.gain.setTargetAtTime(this.params.width * directionMultiplier, now, 0.01);
+
+        // Mix
+        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
+    }
+
+    setRate(rate) {
+        this.params.rate = Math.max(0, Math.min(10, rate));
+        this.updateParams();
+    }
+
+    setWidth(width) {
+        this.params.width = Math.max(0, Math.min(1, width));
+        this.updateParams();
+    }
+
+    setManual(manual) {
+        this.params.manual = Math.max(-1, Math.min(1, manual));
+        this.updateParams();
+    }
+
+    setDirection(direction) {
+        this.params.direction = direction === 1 ? 1 : 0;
+        this.updateParams();
+    }
+
+    setMix(mix) {
+        this.params.mix = Math.max(0, Math.min(1, mix));
+        this.updateParams();
+    }
+
+    getParamDefinitions() {
+        return [
+            { name: 'rate', label: 'Rate (Hz)', min: 0, max: 10, default: 0.5, step: 0.1 },
+            { name: 'width', label: 'Width', min: 0, max: 1, default: 1, step: 0.01 },
+            { name: 'manual', label: 'Manual Pos', min: -1, max: 1, default: 0, step: 0.01 },
+            { name: 'direction', label: 'Direction', min: 0, max: 1, default: 0, step: 1 },
+            { name: 'mix', label: 'Mix', min: 0, max: 1, default: 1, step: 0.01 }
+        ];
+    }
+
+    destroy() {
+        this.lfo.stop();
+        this.lfoOffset.stop();
+        super.destroy();
+    }
+}
+
+
+// Export for use in other modules
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { Pan360 };
 }
