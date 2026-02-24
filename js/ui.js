@@ -326,11 +326,14 @@ class UIManager {
         const paramContainer = effectSlots[effectIndex].querySelector('.effect-params');
         const channelIndex = parseInt(channelEl.dataset.channel);
         
+        console.log('updateEffectParams called:', { effectType, channelIndex, effectIndex });
+        
         // Clear existing params
         paramContainer.innerHTML = '';
         effectSlots[effectIndex].classList.remove('active');
         
         if (effectType === 'none') {
+            console.log('Effect type is none, returning');
             return;
         }
         
@@ -338,7 +341,14 @@ class UIManager {
         
         // Get param definitions from the effect
         const effect = this.synth.getEffectInstance(effectType);
-        if (!effect) return;
+        console.log('Effect instance:', effect);
+        
+        if (!effect) {
+            console.error('Failed to create effect instance for:', effectType);
+            paramContainer.innerHTML = '<div style="color: #e94560; padding: 10px; font-size: 0.85rem;">⚠️ Click "START AUDIO" first to use effects</div>';
+            effectSlots[effectIndex].classList.remove('active');
+            return;
+        }
         
         const params = effect.getParamDefinitions();
         
