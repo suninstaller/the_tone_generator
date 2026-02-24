@@ -1414,7 +1414,8 @@ class CombFilter extends Effect {
 
     updateParams() {
         const now = this.audioContext.currentTime;
-        const delayTime = 1 / this.params.frequency;
+        // Clamp delay time to avoid exceeding max delay (0.1s = min 10Hz)
+        const delayTime = Math.max(0.001, Math.min(0.1, 1 / this.params.frequency));
         this.delay.delayTime.setTargetAtTime(delayTime, now, 0.01);
         this.feedbackGain.gain.setTargetAtTime(this.params.feedback, now, 0.01);
         const filterFreq = 200 + this.params.tone * 9800;
@@ -1427,12 +1428,12 @@ class CombFilter extends Effect {
     setFrequency(f) { this.params.frequency = f; this.updateParams(); }
     setFeedback(fb) { this.params.feedback = fb; this.updateParams(); }
     setTone(t) { this.params.tone = t; this.updateParams(); }
-
+    setResonance(r) { this.params.resonance = r; this.updateParams(); }
     setMix(m) { this.params.mix = m; this.updateParams(); }
 
     getParamDefinitions() {
         return [
-            { name: 'frequency', label: 'Freq (Hz)', min: 50, max: 5000, default: 500, step: 10 },
+            { name: 'frequency', label: 'Freq (Hz)', min: 100, max: 5000, default: 500, step: 10 },
             { name: 'feedback', label: 'Feedback', min: -0.95, max: 0.95, default: 0.8, step: 0.01 },
             { name: 'tone', label: 'Tone', min: 0, max: 1, default: 0.7, step: 0.01 },
             { name: 'resonance', label: 'Resonance', min: 0, max: 1, default: 0.5, step: 0.01 },
