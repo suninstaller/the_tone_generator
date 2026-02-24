@@ -386,9 +386,11 @@ class SynthEngine {
 document.addEventListener('DOMContentLoaded', () => {
     const synth = new SynthEngine();
     const ui = new UIManager(synth);
+    const midi = new MIDIController(synth);
     
     window.synth = synth;
     window.ui = ui;
+    window.midi = midi;
     
     console.log('Tone Generator initialized');
 });

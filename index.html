@@ -36,6 +36,7 @@
                         <option value="binaural">🧠 Binaural Beats</option>
                         <option value="fm">🎹 FM Synth</option>
                         <option value="granular">☁️ Granular</option>
+                        <option value="infrasound">🔊 Infrasound</option>
                     </select>
                 </div>
 
@@ -146,6 +147,7 @@
                         <option value="binaural">🧠 Binaural Beats</option>
                         <option value="fm">🎹 FM Synth</option>
                         <option value="granular">☁️ Granular</option>
+                        <option value="infrasound">🔊 Infrasound</option>
                     </select>
                 </div>
 
@@ -256,6 +258,7 @@
                         <option value="binaural">🧠 Binaural Beats</option>
                         <option value="fm">🎹 FM Synth</option>
                         <option value="granular">☁️ Granular</option>
+                        <option value="infrasound">🔊 Infrasound</option>
                     </select>
                 </div>
 
@@ -366,6 +369,7 @@
                         <option value="binaural">🧠 Binaural Beats</option>
                         <option value="fm">🎹 FM Synth</option>
                         <option value="granular">☁️ Granular</option>
+                        <option value="infrasound">🔊 Infrasound</option>
                     </select>
                 </div>
 
@@ -467,6 +471,37 @@
             </div>
         </div>
 
+        <div class="midi-section">
+            <h3>MIDI Control</h3>
+            <div class="midi-controls">
+                <button id="midi-init-btn" class="midi-btn">Enable MIDI</button>
+                <select id="midi-device-select" class="midi-select" disabled>
+                    <option value="">-- Select Device --</option>
+                </select>
+                <div id="midi-status" class="midi-status">
+                    <span class="midi-led" id="midi-led"></span>
+                    <span class="midi-status-text">Not connected</span>
+                </div>
+                <div class="midi-activity" id="midi-activity">
+                    <span class="activity-label">Activity:</span>
+                    <span class="activity-indicator" id="activity-cc">CC</span>
+                    <span class="activity-indicator" id="activity-note">Note</span>
+                    <span class="activity-indicator" id="activity-pitch">Pitch</span>
+                </div>
+            </div>
+            <div class="midi-help" id="midi-help">
+                <p><strong>Default Novation 25SL MKII Mappings:</strong></p>
+                <ul>
+                    <li>CC 1 (Mod Wheel) -&gt; Master Volume</li>
+                    <li>CC 7-10 -&gt; Channel 1-4 Volume</li>
+                    <li>CC 11-14 -&gt; Channel 1-4 Frequency</li>
+                    <li>CC 16-23 -&gt; Effect Mix Parameters</li>
+                    <li>CC 74 (Filter) -&gt; Filter Frequency</li>
+                    <li>Pitch Bend -&gt; +/- 2 semitones</li>
+                </ul>
+            </div>
+        </div>
+
         <div class="presets">
             <h3>Presets</h3>
             <button class="preset-btn" data-preset="drone">🌫️ Drone</button>
@@ -479,7 +514,9 @@
     </div>
 
     <script src="js/generators.js"></script>
+    <script src="js/midi.js"></script>
     <script src="js/effects.js"></script>
+    <script src="js/midi.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/main.js"></script>
 </body>

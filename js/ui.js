@@ -16,6 +16,7 @@ class UIManager {
         this.setupMasterControls();
         this.setupPresets();
         this.setupVisualizer();
+        this.setupMIDIControls();
     }
 
     /**
@@ -603,6 +604,148 @@ class UIManager {
                 this.updateEffectParams(channel, effectIndex, effectType);
             });
         });
+    }
+
+    /**
+     * Set up MIDI controls
+     */
+    setupMIDIControls() {
+        const midiInitBtn = document.getElementById('midi-init-btn');
+        const midiSelect = document.getElementById('midi-device-select');
+        const midiLed = document.getElementById('midi-led');
+        const midiStatusText = document.querySelector('.midi-status-text');
+        
+        if (!midiInitBtn || !window.midi) return;
+        
+        const midi = window.midi;
+        
+        // Initialize button click
+        midiInitBtn.addEventListener('click', async () => {
+            try {
+                midiInitBtn.disabled = true;
+                midiInitBtn.textContent = 'Initializing...';
+                
+                const devices = await midi.init();
+                
+                // Populate device select
+                midiSelect.innerHTML = '<option value="">-- Select Device --</option>';
+                devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.id;
+                    option.textContent = `${device.name} (${device.manufacturer})`;
+                    midiSelect.appendChild(option);
+                });
+                
+                // Enable select if devices found
+                if (devices.length > 0) {
+                    midiSelect.disabled = false;
+                    midiInitBtn.textContent = 'MIDI Enabled';
+                    
+                    // Auto-connect if Novation device found
+                    const novation = devices.find(d => 
+                        d.name.toLowerCase().includes('novation')
+                    );
+                    if (novation) {
+                        midiSelect.value = novation.id;
+                        connectToDevice(novation.id);
+                    }
+                } else {
+                    midiInitBtn.textContent = 'No MIDI Devices';
+                    midiStatusText.textContent = 'No devices found';
+                    midiLed.classList.add('error');
+                }
+                
+            } catch (error) {
+                console.error('MIDI init failed:', error);
+                midiInitBtn.textContent = 'MIDI Not Supported';
+                midiStatusText.textContent = 'Browser does not support MIDI';
+                midiLed.classList.add('error');
+            }
+        });
+        
+        // Device selection
+        const connectToDevice = (deviceId) => {
+            if (!deviceId) {
+                midi.disconnect();
+                return;
+            }
+            
+            const success = midi.connect(deviceId);
+            if (success) {
+                const device = midi.getDevices().find(d => d.id === deviceId);
+                midiStatusText.textContent = `Connected: ${device ? device.name : 'Unknown'}`;
+                midiLed.classList.add('connected');
+                midiInitBtn.classList.add('connected');
+                midiInitBtn.textContent = 'MIDI Connected';
+            }
+        };
+        
+        midiSelect.addEventListener('change', (e) => {
+            connectToDevice(e.target.value);
+        });
+        
+        // Set up callbacks for UI updates
+        midi.onDeviceListChanged = (devices) => {
+            const currentValue = midiSelect.value;
+            midiSelect.innerHTML = '<option value="">-- Select Device --</option>';
+            devices.forEach(device => {
+                const option = document.createElement('option');
+                option.value = device.id;
+                option.textContent = `${device.name} (${device.manufacturer})`;
+                midiSelect.appendChild(option);
+            });
+            // Restore selection if still available
+            if (currentValue && devices.find(d => d.id === currentValue)) {
+                midiSelect.value = currentValue;
+            }
+        };
+        
+        midi.onStatusChanged = (status, deviceName) => {
+            if (status === 'disconnected') {
+                midiLed.classList.remove('connected');
+                midiStatusText.textContent = 'Disconnected';
+                midiInitBtn.classList.remove('connected');
+                midiInitBtn.textContent = 'Enable MIDI';
+                midiSelect.value = '';
+            }
+        };
+        
+        // Activity indicators
+        const activityCC = document.getElementById('activity-cc');
+        const activityNote = document.getElementById('activity-note');
+        const activityPitch = document.getElementById('activity-pitch');
+        
+        const activityTimers = {};
+        
+        const flashActivity = (element) => {
+            if (!element) return;
+            element.classList.add('active');
+            
+            if (activityTimers[element.id]) {
+                clearTimeout(activityTimers[element.id]);
+            }
+            
+            activityTimers[element.id] = setTimeout(() => {
+                element.classList.remove('active');
+            }, 100);
+        };
+        
+        midi.onMIDIMessage = (status, data1, data2) => {
+            const messageType = status & 0xF0;
+            
+            switch (messageType) {
+                case 0xB0: // CC
+                    flashActivity(activityCC);
+                    break;
+                case 0x90: // Note On
+                case 0x80: // Note Off
+                    flashActivity(activityNote);
+                    break;
+                case 0xE0: // Pitch Bend
+                    flashActivity(activityPitch);
+                    break;
+            }
+        };
     }
 
     /**

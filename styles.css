@@ -378,3 +378,164 @@ input:checked + .toggle-slider:before {
 .effect-slot.active {
     border: 1px solid var(--accent);
 }
+
+/* ============================================================================
+ * MIDI Section Styles
+ * ============================================================================ */
+
+.midi-section {
+    background: var(--bg-tertiary);
+    border-radius: 15px;
+    padding: 20px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+}
+
+.midi-section h3 {
+    color: var(--success);
+    margin-bottom: 15px;
+}
+
+.midi-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+    margin-bottom: 15px;
+}
+
+.midi-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.95rem;
+}
+
+.midi-btn:hover {
+    background: var(--accent);
+}
+
+.midi-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.midi-btn.connected {
+    background: var(--success);
+    color: var(--bg-primary);
+}
+
+.midi-select {
+    padding: 10px 15px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    cursor: pointer;
+    min-width: 200px;
+}
+
+.midi-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.midi-select:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.midi-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 15px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.midi-led {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #444;
+    transition: all 0.2s ease;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.5);
+}
+
+.midi-led.connected {
+    background: #00ff00;
+    box-shadow: 0 0 10px #00ff00, inset 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.midi-led.error {
+    background: #ff0000;
+    box-shadow: 0 0 10px #ff0000;
+}
+
+.midi-status-text {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.midi-activity {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 15px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.activity-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-right: 5px;
+}
+
+.activity-indicator {
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: #444;
+    font-size: 0.75rem;
+    color: #888;
+    transition: all 0.1s ease;
+}
+
+.activity-indicator.active {
+    background: var(--success);
+    color: var(--bg-primary);
+    box-shadow: 0 0 8px var(--success);
+}
+
+.midi-help {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 15px;
+    font-size: 0.85rem;
+}
+
+.midi-help p {
+    margin-bottom: 8px;
+    color: var(--text-primary);
+}
+
+.midi-help ul {
+    list-style: none;
+    padding-left: 0;
+}
+
+.midi-help li {
+    padding: 3px 0;
+    color: var(--text-secondary);
+}
+
+.midi-help li::before {
+    content: "→ ";
+    color: var(--accent);
+}

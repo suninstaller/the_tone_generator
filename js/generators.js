@@ -646,6 +646,8 @@ const GeneratorFactory = {
                 return new FMSynthesizer(audioContext);
             case 'granular':
                 return new GranularSynthesizer(audioContext);
+            case 'infrasound':
+                return new InfrasoundGenerator(audioContext);
             case 'binaural':
                 return new BinauralBeatsGenerator(audioContext);
             case 'noise':
@@ -670,7 +672,8 @@ const GeneratorFactory = {
             { id: 'noise', name: 'Noise', hasDuty: false },
             { id: 'binaural', name: '🧠 Binaural', hasDuty: false },
             { id: 'fm', name: '🎹 FM Synth', hasDuty: false },
-            { id: 'granular', name: '☁️ Granular', hasDuty: false }
+            { id: 'granular', name: '☁️ Granular', hasDuty: false },
+            { id: 'infrasound', name: '🔊 Infrasound', hasDuty: false }
         ];
     }
 };
@@ -874,6 +877,7 @@ if (typeof module !== 'undefined' && module.exports) {
         BinauralBeatsGenerator,
         FMSynthesizer,
         GranularSynthesizer,
+        InfrasoundGenerator,
         GeneratorFactory 
     };
 }
@@ -1144,4 +1148,329 @@ class GranularSynthesizer {
 // Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { GranularSynthesizer };
+}
+/**
+ * ============================================================================
+ * Infrasound Generator
+ * ============================================================================
+ * Specialized generator for extremely low frequencies (0.5-200 Hz) using
+ * buffer-based synthesis for rock-solid frequency stability.
+ * 
+ * Standard OscillatorNode becomes unstable below ~10 Hz. This generator uses
+ * AudioBufferSourceNode with a pre-generated sine wave buffer for precise
+ * cymatic photography applications.
+ * 
+ * How it works:
+ * - Creates a 2-second buffer containing complete sine wave cycles
+ * - Frequency = (number of cycles) / 2 seconds
+ * - For 0.5 Hz: 1 cycle in 2 seconds
+ * - For 8 Hz: 16 cycles in 2 seconds
+ * - For 200 Hz: 400 cycles in 2 seconds
+ * - Buffer loops seamlessly for continuous tone
+ */
+
+class InfrasoundGenerator {
+    constructor(audioContext) {
+        this.audioContext = audioContext;
+        
+        // Audio nodes
+        this.bufferSource = null;
+        this.gainNode = null;
+        this.destination = null;
+        
+        // State
+        this.isPlaying = false;
+        
+        // Parameters
+        this.frequency = 8;        // 0.5 to 200 Hz
+        this.fineTune = 0;         // -0.50 to +0.50 Hz
+        this.waveform = 'sine';    // Only sine for now (best for cymatics)
+        this.volume = 0.7;         // 0 to 1
+        
+        // Buffer configuration
+        this.bufferDuration = 2;   // 2 seconds for stability
+        this.currentBuffer = null; // Cached buffer
+    }
+
+    /**
+     * Calculate the total frequency including fine tune adjustment
+     */
+    getTotalFrequency() {
+        return this.frequency + this.fineTune;
+    }
+
+    /**
+     * Format frequency for display (e.g., "8.00 Hz")
+     */
+    getDisplayFrequency() {
+        return this.getTotalFrequency().toFixed(2) + ' Hz';
+    }
+
+    /**
+     * Generate the sine wave buffer for the current frequency
+     * The buffer contains complete cycles to ensure seamless looping
+     */
+    generateBuffer() {
+        const sampleRate = this.audioContext.sampleRate;
+        const totalFreq = this.getTotalFrequency();
+        
+        // Calculate buffer size for the configured duration
+        const bufferSize = Math.floor(sampleRate * this.bufferDuration);
+        
+        // Create buffer
+        const buffer = this.audioContext.createBuffer(1, bufferSize, sampleRate);
+        const data = buffer.getChannelData(0);
+        
+        // Calculate number of complete cycles that fit in the buffer
+        // For seamless looping, we need complete cycles
+        const cyclesInBuffer = Math.round(totalFreq * this.bufferDuration);
+        const actualFreq = cyclesInBuffer / this.bufferDuration;
+        
+        // Generate sine wave with complete cycles
+        // phase increments by 2*PI * cyclesInBuffer over the entire buffer
+        const phaseIncrement = (2 * Math.PI * cyclesInBuffer) / bufferSize;
+        
+        for (let i = 0; i < bufferSize; i++) {
+            const phase = i * phaseIncrement;
+            data[i] = Math.sin(phase);
+        }
+        
+        // Store the actual frequency being generated (may differ slightly due to
+        // rounding to complete cycles - this ensures perfect loop points)
+        this.actualFrequency = actualFreq;
+        
+        return buffer;
+    }
+
+    /**
+     * Create the buffer source node
+     * Regenerates the buffer with the current frequency settings
+     */
+    createBufferSource() {
+        // Stop and clean up existing source
+        if (this.bufferSource) {
+            try {
+                this.bufferSource.stop();
+                this.bufferSource.disconnect();
+            } catch (e) {
+                // Ignore errors if already stopped
+            }
+            this.bufferSource = null;
+        }
+        
+        // Generate new buffer with current frequency
+        this.currentBuffer = this.generateBuffer();
+        
+        // Create buffer source
+        this.bufferSource = this.audioContext.createBufferSource();
+        this.bufferSource.buffer = this.currentBuffer;
+        this.bufferSource.loop = true;
+        
+        // Create gain node if not exists
+        if (!this.gainNode) {
+            this.gainNode = this.audioContext.createGain();
+            this.gainNode.gain.value = this.volume;
+        }
+        
+        // Connect: buffer -> gain
+        this.bufferSource.connect(this.gainNode);
+        
+        return this.gainNode;
+    }
+
+    /**
+     * Start playing the infrasound tone
+     * @param {AudioNode} destination - Optional destination node to connect to
+     */
+    start(destination) {
+        if (this.isPlaying) return;
+        
+        this.destination = destination;
+        
+        const output = this.createBufferSource();
+        
+        if (destination) {
+            output.connect(destination);
+        }
+        
+        // Start playback
+        this.bufferSource.start();
+        
+        this.isPlaying = true;
+    }
+
+    /**
+     * Stop playing the infrasound tone
+     */
+    stop() {
+        if (!this.isPlaying) return;
+        
+        // Smooth fade out to avoid clicks
+        if (this.gainNode) {
+            const now = this.audioContext.currentTime;
+            this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, now);
+            this.gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+            
+            // Stop source after fade out
+            setTimeout(() => {
+                if (this.bufferSource) {
+                    try {
+                        this.bufferSource.stop();
+                        this.bufferSource.disconnect();
+                    } catch (e) {
+                        // Ignore errors if already stopped
+                    }
+                    this.bufferSource = null;
+                }
+            }, 60);
+            
+            // Restore volume level for next start
+            setTimeout(() => {
+                if (this.gainNode) {
+                    this.gainNode.gain.setValueAtTime(this.volume, this.audioContext.currentTime);
+                }
+            }, 70);
+        }
+        
+        this.isPlaying = false;
+    }
+
+    /**
+     * Set the base frequency and regenerate the buffer
+     * @param {number} hz - Frequency in Hz (0.5 to 200)
+     */
+    setFrequency(hz) {
+        this.frequency = Math.max(0.5, Math.min(200, hz));
+        
+        // Regenerate buffer if playing
+        if (this.isPlaying) {
+            const wasConnected = this.destination;
+            
+            // Create new buffer source with new frequency
+            this.createBufferSource();
+            
+            // Reconnect to destination
+            if (wasConnected && this.gainNode) {
+                this.gainNode.connect(wasConnected);
+            }
+            
+            // Start the new source
+            this.bufferSource.start();
+        }
+    }
+
+    /**
+     * Set the fine tune adjustment
+     * @param {number} hz - Fine tune in Hz (-0.50 to +0.50)
+     */
+    setFineTune(hz) {
+        this.fineTune = Math.max(-0.5, Math.min(0.5, hz));
+        
+        // Regenerate buffer if playing (fine tune affects the actual frequency)
+        if (this.isPlaying) {
+            const wasConnected = this.destination;
+            
+            this.createBufferSource();
+            
+            if (wasConnected && this.gainNode) {
+                this.gainNode.connect(wasConnected);
+            }
+            
+            this.bufferSource.start();
+        }
+    }
+
+    /**
+     * Set the output volume
+     * @param {number} vol - Volume level (0 to 1)
+     */
+    setVolume(vol) {
+        this.volume = Math.max(0, Math.min(1, vol));
+        
+        if (this.gainNode) {
+            const now = this.audioContext.currentTime;
+            this.gainNode.gain.setTargetAtTime(this.volume, now, 0.01);
+        }
+    }
+
+    /**
+     * Set the waveform type (currently only 'sine' is supported)
+     * @param {string} type - Waveform type ('sine')
+     */
+    setWaveform(type) {
+        // Only sine is supported for now - best for cymatics
+        if (type === 'sine') {
+            this.waveform = type;
+            // Buffer would need to be regenerated, but sine is the only option
+            if (this.isPlaying) {
+                const wasConnected = this.destination;
+                
+                this.createBufferSource();
+                
+                if (wasConnected && this.gainNode) {
+                    this.gainNode.connect(wasConnected);
+                }
+                
+                this.bufferSource.start();
+            }
+        }
+    }
+
+    /**
+     * Get the output node for connecting to effects chain
+     * @returns {GainNode} The gain node output
+     */
+    getOutput() {
+        return this.gainNode;
+    }
+
+    /**
+     * Check if the generator is currently playing
+     * @returns {boolean} True if playing
+     */
+    getIsPlaying() {
+        return this.isPlaying;
+    }
+
+    /**
+     * Get the current frequency settings
+     * @returns {object} Object with frequency, fineTune, and total
+     */
+    getFrequencyInfo() {
+        return {
+            frequency: this.frequency,
+            fineTune: this.fineTune,
+            total: this.getTotalFrequency(),
+            display: this.getDisplayFrequency(),
+            actual: this.actualFrequency || this.getTotalFrequency()
+        };
+    }
+
+    /**
+     * Clean up and destroy the generator
+     */
+    destroy() {
+        this.stop();
+        
+        if (this.bufferSource) {
+            try {
+                this.bufferSource.disconnect();
+            } catch (e) {}
+            this.bufferSource = null;
+        }
+        
+        if (this.gainNode) {
+            this.gainNode.disconnect();
+            this.gainNode = null;
+        }
+        
+        this.currentBuffer = null;
+        this.destination = null;
+    }
+}
+
+
+// Export for use in other modules
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { InfrasoundGenerator };
 }
