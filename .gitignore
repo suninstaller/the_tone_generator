@@ -1,0 +1,25 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Node modules (if you add them later)
+node_modules/
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp
+*.backup
+*-temp.js
+*-backup.js
+
+# Personal notes (optional)
+notes.txt
+todo.txt

@@ -1,0 +1,391 @@
+/**
+ * Main Application Module
+ * Initializes the synthesizer engine and connects all components
+ */
+
+class SynthEngine {
+    constructor() {
+        this.audioContext = null;
+        this.isAudioStarted = false;
+        
+        // 4 generators (one per channel)
+        this.generators = [];
+        
+        // Effect chains for each channel (3 effects per channel max)
+        this.effectChains = [[], [], [], []];
+        
+        // Master output chain
+        this.masterGain = null;
+        this.analyser = null;
+        this.compressor = null;
+        
+        // Channel settings
+        this.channelSettings = [
+            { enabled: true, volume: 0.5, waveform: 'sine' },
+            { enabled: false, volume: 0.5, waveform: 'sawtooth' },
+            { enabled: false, volume: 0.5, waveform: 'triangle' },
+            { enabled: false, volume: 0.5, waveform: 'square' }
+        ];
+    }
+
+    /**
+     * Initialize the audio context and start audio
+     */
+    async start() {
+        if (this.isAudioStarted) return;
+        
+        try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            this.audioContext = new AudioContext();
+            
+            if (this.audioContext.state === 'suspended') {
+                await this.audioContext.resume();
+            }
+            
+            this.setupMasterChain();
+            
+            // Create generators for each channel using factory
+            for (let i = 0; i < 4; i++) {
+                this.createChannel(i);
+            }
+            
+            this.isAudioStarted = true;
+            console.log('Audio engine started successfully');
+            
+        } catch (error) {
+            console.error('Failed to start audio:', error);
+            alert('Failed to start audio. Please check your browser supports Web Audio API.');
+        }
+    }
+
+    /**
+     * Stop audio and clean up
+     */
+    stop() {
+        if (!this.isAudioStarted) return;
+        
+        this.generators.forEach(gen => {
+            if (gen) gen.destroy();
+        });
+        this.generators = [];
+        
+        this.effectChains.forEach(chain => {
+            chain.forEach(effect => {
+                if (effect) effect.destroy();
+            });
+        });
+        this.effectChains = [[], [], [], []];
+        
+        if (this.masterGain) {
+            this.masterGain.disconnect();
+            this.masterGain = null;
+        }
+        if (this.analyser) {
+            this.analyser.disconnect();
+            this.analyser = null;
+        }
+        if (this.compressor) {
+            this.compressor.disconnect();
+            this.compressor = null;
+        }
+        
+        if (this.audioContext) {
+            this.audioContext.close();
+            this.audioContext = null;
+        }
+        
+        this.isAudioStarted = false;
+        console.log('Audio engine stopped');
+    }
+
+    /**
+     * Set up the master output chain
+     */
+    setupMasterChain() {
+        this.masterGain = this.audioContext.createGain();
+        this.masterGain.gain.value = 0.7;
+        
+        this.compressor = this.audioContext.createDynamicsCompressor();
+        this.compressor.threshold.value = -24;
+        this.compressor.knee.value = 30;
+        this.compressor.ratio.value = 12;
+        this.compressor.attack.value = 0.003;
+        this.compressor.release.value = 0.25;
+        
+        this.analyser = this.audioContext.createAnalyser();
+        this.analyser.fftSize = 2048;
+        
+        this.masterGain.connect(this.compressor);
+        this.compressor.connect(this.analyser);
+        this.analyser.connect(this.audioContext.destination);
+    }
+
+    /**
+     * Create a channel with generator and effect chain
+     */
+    createChannel(index) {
+        // Use the factory to create the appropriate generator type
+        const waveform = this.channelSettings[index].waveform;
+        const generator = GeneratorFactory.create(waveform, this.audioContext);
+        this.generators[index] = generator;
+        
+        // Connect generator directly to master initially
+        if (this.channelSettings[index].enabled) {
+            generator.start(this.masterGain);
+            generator.setVolume(this.channelSettings[index].volume);
+        }
+    }
+
+    /**
+     * Rebuild the effect chain for a channel
+     */
+    rebuildEffectChain(channelIndex) {
+        const generator = this.generators[channelIndex];
+        if (!generator) return;
+        
+        const wasPlaying = generator.getIsPlaying();
+        generator.stop();
+        
+        let currentNode = generator.getOutput();
+        const effects = this.effectChains[channelIndex].filter(e => e !== null);
+        
+        if (effects.length > 0) {
+            currentNode.disconnect();
+            currentNode.connect(effects[0].getInput());
+            
+            for (let i = 0; i < effects.length - 1; i++) {
+                effects[i].disconnect();
+                effects[i].connect(effects[i + 1].getInput());
+            }
+            
+            effects[effects.length - 1].disconnect();
+            effects[effects.length - 1].connect(this.masterGain);
+        } else {
+            currentNode.disconnect();
+            currentNode.connect(this.masterGain);
+        }
+        
+        if (wasPlaying && this.channelSettings[channelIndex].enabled) {
+            // For generators that need special restart
+            if (generator.createOscillator) {
+                generator.createOscillator();
+            } else if (generator.createNoiseNode) {
+                generator.createNoiseNode();
+            }
+        }
+    }
+
+    /**
+     * Enable/disable a channel
+     */
+    setChannelEnabled(index, enabled) {
+        this.channelSettings[index].enabled = enabled;
+        
+        const generator = this.generators[index];
+        if (!generator) return;
+        
+        if (enabled) {
+            if (!generator.getIsPlaying()) {
+                generator.start(this.masterGain);
+                this.rebuildEffectChain(index);
+            }
+        } else {
+            generator.stop();
+        }
+    }
+
+    /**
+     * Set channel waveform - can change generator type!
+     */
+    setChannelWaveform(index, waveform) {
+        const wasEnabled = this.channelSettings[index].enabled;
+        const wasPlaying = this.generators[index] && this.generators[index].getIsPlaying();
+        
+        // Update settings
+        this.channelSettings[index].waveform = waveform;
+        
+        // Destroy old generator
+        if (this.generators[index]) {
+            this.generators[index].destroy();
+        }
+        
+        // Create new generator of the appropriate type
+        const generator = GeneratorFactory.create(waveform, this.audioContext);
+        this.generators[index] = generator;
+        
+        // Restore volume
+        generator.setVolume(this.channelSettings[index].volume);
+        
+        // Rebuild effect chain
+        this.rebuildEffectChain(index);
+        
+        // Restart if it was playing
+        if (wasEnabled && wasPlaying) {
+            generator.start(this.masterGain);
+        }
+    }
+
+    /**
+     * Set channel frequency (for oscillators)
+     */
+    setChannelFrequency(index, frequency) {
+        const generator = this.generators[index];
+        if (!generator) return;
+        
+        // Only oscillators have setFrequency
+        if (generator.setFrequency) {
+            generator.setFrequency(frequency);
+        }
+    }
+
+    /**
+     * Set channel duty cycle (for square wave)
+     */
+    setChannelDuty(index, duty) {
+        const generator = this.generators[index];
+        if (!generator) return;
+        
+        if (generator.setDutyCycle) {
+            generator.setDutyCycle(duty);
+        }
+    }
+
+    /**
+     * Set channel volume
+     */
+    setChannelVolume(index, volume) {
+        this.channelSettings[index].volume = volume;
+        
+        const generator = this.generators[index];
+        if (!generator) return;
+        
+        generator.setVolume(volume);
+    }
+
+    /**
+     * Set noise-specific parameters
+     */
+    setChannelNoiseType(index, type) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setNoiseType) return;
+        generator.setNoiseType(type);
+    }
+
+    setChannelNoiseFilter(index, freq) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setFilterFreq) return;
+        generator.setFilterFreq(freq);
+    }
+
+    /**
+     * Set binaural beats specific parameters
+     */
+    setChannelBinauralBaseFreq(index, freq) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setBaseFrequency) return;
+        generator.setBaseFrequency(freq);
+    }
+
+    setChannelBinauralBeatFreq(index, freq) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setBeatFrequency) return;
+        generator.setBeatFrequency(freq);
+    }
+
+    setChannelBinauralPreset(index, preset) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setPreset) return;
+        generator.setPreset(preset);
+    }
+
+    /**
+     * Set FM synthesizer specific parameters
+     */
+    setChannelFMModulatorFreq(index, freq) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setModulatorFreq) return;
+        generator.setModulatorFreq(freq);
+    }
+
+    setChannelFMIndex(index, amount) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setModulationIndex) return;
+        generator.setModulationIndex(amount);
+    }
+
+    setChannelFMAlgorithm(index, alg) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setAlgorithm) return;
+        generator.setAlgorithm(alg);
+    }
+
+    /**
+     * Set an effect for a channel
+     */
+    setChannelEffect(channelIndex, effectIndex, effectType) {
+        const existingEffect = this.effectChains[channelIndex][effectIndex];
+        if (existingEffect) {
+            existingEffect.destroy();
+        }
+        
+        if (effectType !== 'none') {
+            this.effectChains[channelIndex][effectIndex] = EffectFactory.create(
+                effectType, 
+                this.audioContext
+            );
+        } else {
+            this.effectChains[channelIndex][effectIndex] = null;
+        }
+        
+        this.rebuildEffectChain(channelIndex);
+    }
+
+    /**
+     * Set a parameter on a channel's effect
+     */
+    setEffectParam(channelIndex, effectIndex, paramName, value) {
+        const effect = this.effectChains[channelIndex][effectIndex];
+        if (!effect) return;
+        
+        const setterName = `set${paramName.charAt(0).toUpperCase()}${paramName.slice(1)}`;
+        if (typeof effect[setterName] === 'function') {
+            effect[setterName](value);
+        }
+    }
+
+    /**
+     * Get an effect instance (for UI to query parameters)
+     */
+    getEffectInstance(effectType) {
+        if (!this.audioContext) return null;
+        return EffectFactory.create(effectType, this.audioContext);
+    }
+
+    /**
+     * Set master volume
+     */
+    setMasterVolume(volume) {
+        if (this.masterGain) {
+            const now = this.audioContext.currentTime;
+            this.masterGain.gain.setTargetAtTime(volume, now, 0.01);
+        }
+    }
+
+    /**
+     * Get analyser node for visualization
+     */
+    getAnalyser() {
+        return this.analyser;
+    }
+}
+
+// Initialize the application when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    const synth = new SynthEngine();
+    const ui = new UIManager(synth);
+    
+    window.synth = synth;
+    window.ui = ui;
+    
+    console.log('Tone Generator initialized');
+});

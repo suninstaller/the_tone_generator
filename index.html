@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tone Generator - Real-time Synthesizer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎛️ Tone Generator</h1>
+            <p>Real-time synthesizer with effects</p>
+            <button id="power-btn" class="power-off">⏻ START AUDIO</button>
+        </header>
+
+        <div class="synth-grid">
+            <!-- Generator 1 -->
+            <div class="channel" data-channel="0">
+                <div class="channel-header">
+                    <h3>Oscillator 1</h3>
+                    <label class="toggle">
+                        <input type="checkbox" class="channel-on" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="section">
+                    <label>Waveform</label>
+                    <select class="waveform">
+                        <option value="sine">Sine</option>
+                        <option value="sawtooth">Sawtooth</option>
+                        <option value="triangle">Triangle</option>
+                        <option value="square">Square</option>
+                        <option value="noise">🔊 Noise</option>
+                        <option value="binaural">🧠 Binaural Beats</option>
+                        <option value="fm">🎹 FM Synth</option>
+                    </select>
+                </div>
+
+                <div class="section">
+                    <label>Frequency: <span class="freq-val">440</span> Hz</label>
+                    <input type="range" class="frequency" min="20" max="2000" value="440">
+                </div>
+
+                <div class="section square-duty hidden">
+                    <label>Duty Cycle: <span class="duty-val">50</span>%</label>
+                    <input type="range" class="duty" min="1" max="99" value="50">
+                </div>
+
+                <div class="section">
+                    <label>Volume</label>
+                    <input type="range" class="volume" min="0" max="100" value="50">
+                </div>
+
+                <div class="effects-section">
+                    <h4>Effects Chain</h4>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generator 2 -->
+            <div class="channel" data-channel="1">
+                <div class="channel-header">
+                    <h3>Oscillator 2</h3>
+                    <label class="toggle">
+                        <input type="checkbox" class="channel-on">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="section">
+                    <label>Waveform</label>
+                    <select class="waveform">
+                        <option value="sine">Sine</option>
+                        <option value="sawtooth" selected>Sawtooth</option>
+                        <option value="triangle">Triangle</option>
+                        <option value="square">Square</option>
+                        <option value="noise">🔊 Noise</option>
+                        <option value="binaural">🧠 Binaural Beats</option>
+                        <option value="fm">🎹 FM Synth</option>
+                    </select>
+                </div>
+
+                <div class="section">
+                    <label>Frequency: <span class="freq-val">220</span> Hz</label>
+                    <input type="range" class="frequency" min="20" max="2000" value="220">
+                </div>
+
+                <div class="section square-duty hidden">
+                    <label>Duty Cycle: <span class="duty-val">50</span>%</label>
+                    <input type="range" class="duty" min="1" max="99" value="50">
+                </div>
+
+                <div class="section">
+                    <label>Volume</label>
+                    <input type="range" class="volume" min="0" max="100" value="50">
+                </div>
+
+                <div class="effects-section">
+                    <h4>Effects Chain</h4>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generator 3 -->
+            <div class="channel" data-channel="2">
+                <div class="channel-header">
+                    <h3>Oscillator 3</h3>
+                    <label class="toggle">
+                        <input type="checkbox" class="channel-on">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="section">
+                    <label>Waveform</label>
+                    <select class="waveform">
+                        <option value="sine">Sine</option>
+                        <option value="sawtooth">Sawtooth</option>
+                        <option value="triangle" selected>Triangle</option>
+                        <option value="square">Square</option>
+                        <option value="noise">🔊 Noise</option>
+                        <option value="binaural">🧠 Binaural Beats</option>
+                        <option value="fm">🎹 FM Synth</option>
+                    </select>
+                </div>
+
+                <div class="section">
+                    <label>Frequency: <span class="freq-val">110</span> Hz</label>
+                    <input type="range" class="frequency" min="20" max="2000" value="110">
+                </div>
+
+                <div class="section square-duty hidden">
+                    <label>Duty Cycle: <span class="duty-val">50</span>%</label>
+                    <input type="range" class="duty" min="1" max="99" value="50">
+                </div>
+
+                <div class="section">
+                    <label>Volume</label>
+                    <input type="range" class="volume" min="0" max="100" value="50">
+                </div>
+
+                <div class="effects-section">
+                    <h4>Effects Chain</h4>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generator 4 -->
+            <div class="channel" data-channel="3">
+                <div class="channel-header">
+                    <h3>Oscillator 4</h3>
+                    <label class="toggle">
+                        <input type="checkbox" class="channel-on">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                
+                <div class="section">
+                    <label>Waveform</label>
+                    <select class="waveform">
+                        <option value="sine">Sine</option>
+                        <option value="sawtooth">Sawtooth</option>
+                        <option value="triangle">Triangle</option>
+                        <option value="square" selected>Square</option>
+                        <option value="noise">🔊 Noise</option>
+                        <option value="binaural">🧠 Binaural Beats</option>
+                        <option value="fm">🎹 FM Synth</option>
+                    </select>
+                </div>
+
+                <div class="section">
+                    <label>Frequency: <span class="freq-val">55</span> Hz</label>
+                    <input type="range" class="frequency" min="20" max="2000" value="55">
+                </div>
+
+                <div class="section square-duty hidden">
+                    <label>Duty Cycle: <span class="duty-val">30</span>%</label>
+                    <input type="range" class="duty" min="1" max="99" value="30">
+                </div>
+
+                <div class="section">
+                    <label>Volume</label>
+                    <input type="range" class="volume" min="0" max="100" value="50">
+                </div>
+
+                <div class="effects-section">
+                    <h4>Effects Chain</h4>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                    
+                    <div class="effect-slot">
+                        <select class="effect-type">
+                            <option value="none">-- No Effect --</option>
+                            <option value="ringmod">Ring Modulator</option>
+                            <option value="am">📻 AM Mod</option>
+                            <option value="flanger">Flanger</option>
+                            <option value="phaser">🌀 Phaser</option>
+                            <option value="chorus">🆕 Chorus</option>
+                            <option value="delay">Tape Delay</option>
+                            <option value="pingpong">🏓 Ping Pong</option>
+                            <option value="reverb">Reverb</option>
+                            <option value="distortion">🆕 Distortion</option>
+                            <option value="bitcrusher">🆕 Bit Crusher</option>
+                            <option value="comb">🔧 Comb Filter</option>
+                            <option value="compressor">🎚️ Compressor</option>
+                            <option value="tremolo">🎸 Tremolo</option>
+                            <option value="prefet">🔥 PreFET</option>
+                            <option value="pror">🏛️ Pro-R Reverb</option>
+                        </select>
+                        <div class="effect-params"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="master-section">
+            <h3>Master Output</h3>
+            <div class="master-controls">
+                <div class="section">
+                    <label>Master Volume</label>
+                    <input type="range" id="master-volume" min="0" max="100" value="70">
+                </div>
+                <canvas id="visualizer" width="600" height="100"></canvas>
+            </div>
+        </div>
+
+        <div class="presets">
+            <h3>Presets</h3>
+            <button class="preset-btn" data-preset="drone">🌫️ Drone</button>
+            <button class="preset-btn" data-preset="bass">🎸 Bass</button>
+            <button class="preset-btn" data-preset="lead">🎹 Lead</button>
+            <button class="preset-btn" data-preset="fx">✨ FX</button>
+            <button class="preset-btn" data-preset="meditate">🧘 Meditate</button>
+            <button class="preset-btn" data-preset="reset">↺ Reset</button>
+        </div>
+    </div>
+
+    <script src="js/generators.js"></script>
+    <script src="js/effects.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
