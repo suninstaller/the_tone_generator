@@ -76,19 +76,27 @@ class UIManager {
                 dutySection.classList.add('hidden');
             }
             
-            // Handle binaural beats special controls
+            // Handle special generator controls
             this.handleBinauralControls(channelEl, channelIndex, waveform);
-            
-            // Handle FM synth special controls
             this.handleFMControls(channelEl, channelIndex, waveform);
+            this.handleInfrasoundControls(channelEl, channelIndex, waveform);
+            this.handleNoiseControls(channelEl, channelIndex, waveform);
+            this.handleGranularControls(channelEl, channelIndex, waveform);
         });
 
         // Frequency slider
         const freqSlider = channelEl.querySelector('.frequency');
-        const freqVal = channelEl.querySelector('.freq-val');
         freqSlider.addEventListener('input', (e) => {
             const freq = parseFloat(e.target.value);
-            freqVal.textContent = freq;
+            // Re-query freqVal each time since HTML can change
+            const freqVal = channelEl.querySelector('.freq-val');
+            // Format display based on range (infrasound needs decimals)
+            const waveform = channelEl.querySelector('.waveform').value;
+            if (waveform === 'infrasound') {
+                freqVal.textContent = freq.toFixed(2);
+            } else {
+                freqVal.textContent = Math.round(freq);
+            }
             this.synth.setChannelFrequency(channelIndex, freq);
         });
 
@@ -132,10 +140,16 @@ class UIManager {
         }
         
         if (waveform !== 'binaural') {
-            // Restore normal frequency label
-            const freqLabel = channelEl.querySelector('.frequency').previousElementSibling;
-            if (freqLabel) {
-                freqLabel.innerHTML = 'Frequency: <span class="freq-val">200</span> Hz';
+            // Restore normal frequency label (only if not in other special mode)
+            const freqSlider = channelEl.querySelector('.frequency');
+            const freqLabel = freqSlider.previousElementSibling;
+            const isFM = channelEl.querySelector('.fm-controls') !== null;
+            const isInfrasound = freqSlider.dataset.infrasound === 'true';
+            const isNoise = channelEl.querySelector('.noise-controls') !== null;
+            const isGranular = channelEl.querySelector('.granular-controls') !== null;
+            
+            if (freqLabel && !isFM && !isInfrasound && !isNoise && !isGranular) {
+                freqLabel.innerHTML = 'Frequency: <span class="freq-val">440</span> Hz';
             }
             return;
         }
@@ -224,9 +238,15 @@ class UIManager {
         }
         
         if (waveform !== 'fm') {
-            // Restore normal frequency label
-            const freqLabel = channelEl.querySelector('.frequency').previousElementSibling;
-            if (freqLabel && !channelEl.querySelector('.binaural-controls')) {
+            // Restore normal frequency label (only if not in other special mode)
+            const freqSlider = channelEl.querySelector('.frequency');
+            const freqLabel = freqSlider.previousElementSibling;
+            const isBinaural = channelEl.querySelector('.binaural-controls') !== null;
+            const isInfrasound = freqSlider.dataset.infrasound === 'true';
+            const isNoise = channelEl.querySelector('.noise-controls') !== null;
+            const isGranular = channelEl.querySelector('.granular-controls') !== null;
+            
+            if (freqLabel && !isBinaural && !isInfrasound && !isNoise && !isGranular) {
                 freqLabel.innerHTML = 'Frequency: <span class="freq-val">440</span> Hz';
             }
             return;
@@ -317,6 +337,244 @@ class UIManager {
         this.synth.setChannelFMModulatorFreq(channelIndex, 110);
         this.synth.setChannelFMIndex(channelIndex, 100);
         this.synth.setChannelFMAlgorithm(channelIndex, 0);
+    }
+
+    /**
+     * Handle infrasound specific controls
+     */
+    handleInfrasoundControls(channelEl, channelIndex, waveform) {
+        const freqSlider = channelEl.querySelector('.frequency');
+        const freqLabel = freqSlider.previousElementSibling;
+        const freqVal = freqLabel.querySelector('.freq-val');
+        
+        // Remove existing infrasound controls
+        const existingInfra = channelEl.querySelector('.infrasound-controls');
+        if (existingInfra) {
+            existingInfra.remove();
+        }
+        
+        // Remove infrasound flag if not infrasound
+        if (waveform !== 'infrasound') {
+            if (freqSlider.dataset.infrasound === 'true') {
+                // Restore normal range
+                freqSlider.min = '20';
+                freqSlider.max = '20000';
+                freqSlider.step = '1';
+                freqSlider.value = '55';
+                freqVal.textContent = '55';
+                freqLabel.innerHTML = 'Frequency: <span class="freq-val">55</span> Hz';
+                freqSlider.removeAttribute('data-infrasound');
+                
+                // Update synth
+                this.synth.setChannelFrequency(channelIndex, 55);
+            }
+            return;
+        }
+        
+        // Set infrasound mode
+        freqSlider.setAttribute('data-infrasound', 'true');
+        
+        // Change frequency label and range for infrasound (0.5 - 50 Hz)
+        freqSlider.min = '0.5';
+        freqSlider.max = '50';
+        freqSlider.step = '0.5';
+        freqSlider.value = '8';
+        freqVal.textContent = '8.00';
+        freqLabel.innerHTML = 'Frequency: <span class="freq-val">8.00</span> Hz <small>(Infrasound)</small>';
+        
+        // Update synth
+        this.synth.setChannelFrequency(channelIndex, 8);
+        
+        // Create infrasound waveform selector
+        const infraDiv = document.createElement('div');
+        infraDiv.className = 'section infrasound-controls';
+        
+        const waveLabel = document.createElement('label');
+        waveLabel.textContent = 'Waveform:';
+        
+        const waveSelect = document.createElement('select');
+        waveSelect.className = 'infrasound-waveform';
+        waveSelect.style.cssText = 'width: 100%; padding: 5px; margin-top: 5px; background: #0f3460; color: #eee; border: 1px solid #e94560; border-radius: 4px;';
+        
+        const waveforms = [
+            { id: 'sine', name: 'Sine' },
+            { id: 'sawtooth', name: 'Sawtooth' },
+            { id: 'triangle', name: 'Triangle' }
+        ];
+        
+        waveforms.forEach(wf => {
+            const option = document.createElement('option');
+            option.value = wf.id;
+            option.textContent = wf.name;
+            waveSelect.appendChild(option);
+        });
+        
+        waveSelect.addEventListener('change', (e) => {
+            this.synth.setChannelInfrasoundWaveform(channelIndex, e.target.value);
+        });
+        
+        infraDiv.appendChild(waveLabel);
+        infraDiv.appendChild(waveSelect);
+        
+        // Insert after frequency section
+        const freqSection = freqSlider.parentElement;
+        freqSection.insertAdjacentElement('afterend', infraDiv);
+    }
+
+    /**
+     * Handle noise generator specific controls
+     */
+    handleNoiseControls(channelEl, channelIndex, waveform) {
+        // Remove existing noise controls if any
+        const existingNoise = channelEl.querySelector('.noise-controls');
+        if (existingNoise) {
+            existingNoise.remove();
+        }
+        
+        // Change frequency label for noise (it's a filter)
+        const freqSlider = channelEl.querySelector('.frequency');
+        const freqLabel = freqSlider.previousElementSibling;
+        
+        if (waveform !== 'noise') {
+            // Restore normal label if not noise (and not other special modes)
+            const isBinaural = channelEl.querySelector('.binaural-controls') !== null;
+            const isFM = channelEl.querySelector('.fm-controls') !== null;
+            const isInfrasound = freqSlider.dataset.infrasound === 'true';
+            const isGranular = channelEl.querySelector('.granular-controls') !== null;
+            
+            if (!isBinaural && !isFM && !isInfrasound && !isGranular) {
+                freqLabel.innerHTML = 'Frequency: <span class="freq-val">440</span> Hz';
+            }
+            return;
+        }
+        
+        // Change frequency label to "Filter Cutoff"
+        freqLabel.innerHTML = 'Filter Cutoff: <span class="freq-val">1000</span> Hz';
+        freqSlider.value = 1000;
+        
+        // Create noise controls container
+        const noiseDiv = document.createElement('div');
+        noiseDiv.className = 'section noise-controls';
+        
+        // Noise type selector
+        const typeLabel = document.createElement('label');
+        typeLabel.textContent = 'Noise Type:';
+        
+        const typeSelect = document.createElement('select');
+        typeSelect.className = 'noise-type';
+        typeSelect.style.cssText = 'width: 100%; padding: 5px; margin-top: 5px; background: #0f3460; color: #eee; border: 1px solid #e94560; border-radius: 4px;';
+        
+        const types = [
+            { id: 'white', name: 'White Noise' },
+            { id: 'pink', name: 'Pink Noise' },
+            { id: 'brown', name: 'Brown Noise' }
+        ];
+        
+        types.forEach(type => {
+            const option = document.createElement('option');
+            option.value = type.id;
+            option.textContent = type.name;
+            typeSelect.appendChild(option);
+        });
+        
+        typeSelect.addEventListener('change', (e) => {
+            this.synth.setChannelNoiseType(channelIndex, e.target.value);
+        });
+        
+        noiseDiv.appendChild(typeLabel);
+        noiseDiv.appendChild(typeSelect);
+        
+        // Insert after frequency section
+        const freqSection = freqSlider.parentElement;
+        freqSection.insertAdjacentElement('afterend', noiseDiv);
+        
+        // Initialize noise with default filter
+        this.synth.setChannelFrequency(channelIndex, 1000);
+    }
+
+    /**
+     * Handle granular synthesizer specific controls
+     */
+    handleGranularControls(channelEl, channelIndex, waveform) {
+        // Remove existing granular controls if any
+        const existingGranular = channelEl.querySelector('.granular-controls');
+        if (existingGranular) {
+            existingGranular.remove();
+        }
+        
+        if (waveform !== 'granular') {
+            return;
+        }
+        
+        // Create granular controls container
+        const granularDiv = document.createElement('div');
+        granularDiv.className = 'section granular-controls';
+        
+        // Density slider (grains per second)
+        const densityLabel = document.createElement('label');
+        densityLabel.innerHTML = `Density: <span class="density-val">20</span> grains/s`;
+        
+        const densitySlider = document.createElement('input');
+        densitySlider.type = 'range';
+        densitySlider.className = 'granular-density';
+        densitySlider.min = '1';
+        densitySlider.max = '100';
+        densitySlider.value = '20';
+        
+        densitySlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            densityLabel.innerHTML = `Density: <span class="density-val">${val}</span> grains/s`;
+            this.synth.setChannelGranularParam(channelIndex, 'density', val);
+        });
+        
+        // Spray slider (frequency randomization)
+        const sprayLabel = document.createElement('label');
+        sprayLabel.innerHTML = `Spray: <span class="spray-val">100</span> Hz`;
+        sprayLabel.style.marginTop = '10px';
+        sprayLabel.style.display = 'block';
+        
+        const spraySlider = document.createElement('input');
+        spraySlider.type = 'range';
+        spraySlider.className = 'granular-spray';
+        spraySlider.min = '0';
+        spraySlider.max = '1000';
+        spraySlider.value = '100';
+        
+        spraySlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            sprayLabel.innerHTML = `Spray: <span class="spray-val">${val}</span> Hz`;
+            this.synth.setChannelGranularParam(channelIndex, 'spray', val);
+        });
+        
+        // Grain size slider
+        const sizeLabel = document.createElement('label');
+        sizeLabel.innerHTML = `Grain Size: <span class="size-val">50</span> ms`;
+        sizeLabel.style.marginTop = '10px';
+        sizeLabel.style.display = 'block';
+        
+        const sizeSlider = document.createElement('input');
+        sizeSlider.type = 'range';
+        sizeSlider.className = 'granular-size';
+        sizeSlider.min = '10';
+        sizeSlider.max = '200';
+        sizeSlider.value = '50';
+        
+        sizeSlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            sizeLabel.innerHTML = `Grain Size: <span class="size-val">${val}</span> ms`;
+            this.synth.setChannelGranularParam(channelIndex, 'grainSize', val);
+        });
+        
+        granularDiv.appendChild(densityLabel);
+        granularDiv.appendChild(densitySlider);
+        granularDiv.appendChild(sprayLabel);
+        granularDiv.appendChild(spraySlider);
+        granularDiv.appendChild(sizeLabel);
+        granularDiv.appendChild(sizeSlider);
+        
+        // Insert after frequency section
+        const freqSection = channelEl.querySelector('.frequency').parentElement;
+        freqSection.insertAdjacentElement('afterend', granularDiv);
     }
 
     /**
@@ -617,6 +875,13 @@ class UIManager {
         
         if (!midiInitBtn || !window.midi) return;
         
+        // Check for secure context (required for Web MIDI)
+        if (!window.isSecureContext) {
+            console.warn('Web MIDI requires HTTPS or localhost');
+            midiStatusText.textContent = 'MIDI requires HTTPS';
+            midiLed.classList.add('error');
+        }
+        
         const midi = window.midi;
         
         // Initialize button click
@@ -625,11 +890,14 @@ class UIManager {
                 midiInitBtn.disabled = true;
                 midiInitBtn.textContent = 'Initializing...';
                 
+                console.log('Requesting MIDI access...');
                 const devices = await midi.init();
+                console.log('MIDI devices found:', devices);
                 
                 // Populate device select
                 midiSelect.innerHTML = '<option value="">-- Select Device --</option>';
                 devices.forEach(device => {
+                    console.log('Adding device to list:', device);
                     const option = document.createElement('option');
                     option.value = device.id;
                     option.textContent = `${device.name} (${device.manufacturer})`;
@@ -651,14 +919,15 @@ class UIManager {
                     }
                 } else {
                     midiInitBtn.textContent = 'No MIDI Devices';
-                    midiStatusText.textContent = 'No devices found';
+                    midiStatusText.textContent = 'No devices found. Is your controller connected?';
                     midiLed.classList.add('error');
+                    console.log('No MIDI input devices found. Check browser console for details.');
                 }
                 
             } catch (error) {
                 console.error('MIDI init failed:', error);
-                midiInitBtn.textContent = 'MIDI Not Supported';
-                midiStatusText.textContent = 'Browser does not support MIDI';
+                midiInitBtn.textContent = 'MIDI Error';
+                midiStatusText.textContent = error.message || 'Failed to initialize MIDI';
                 midiLed.classList.add('error');
             }
         });

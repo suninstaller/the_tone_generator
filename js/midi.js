@@ -76,11 +76,17 @@ class MIDIController {
         }
         
         try {
-            this.midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+            console.log('Requesting MIDI access...');
+            this.midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+            console.log('MIDI access granted:', this.midiAccess);
+            console.log('MIDI inputs:', this.midiAccess.inputs);
+            
             this.updateDeviceList();
+            console.log('Device list updated, found', this.devices.length, 'devices');
             
             // Listen for device changes
             this.midiAccess.onstatechange = (event) => {
+                console.log('MIDI state change:', event.port.type, event.port.state, event.port.name);
                 this.updateDeviceList();
                 if (this.onDeviceListChanged) {
                     this.onDeviceListChanged(this.devices);
@@ -109,7 +115,9 @@ class MIDIController {
         this.devices = [];
         if (!this.midiAccess) return;
         
+        console.log('Scanning MIDI inputs...');
         for (let input of this.midiAccess.inputs.values()) {
+            console.log('Found MIDI input:', input.name, 'by', input.manufacturer, 'state:', input.state);
             this.devices.push({
                 id: input.id,
                 name: input.name || 'Unknown Device',
@@ -118,6 +126,7 @@ class MIDIController {
                 connection: input.connection
             });
         }
+        console.log('Total MIDI devices found:', this.devices.length);
     }
     
     /**

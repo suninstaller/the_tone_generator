@@ -235,9 +235,22 @@ class SynthEngine {
         const generator = this.generators[index];
         if (!generator) return;
         
-        // Only oscillators have setFrequency
+        // Handle different generator types
         if (generator.setFrequency) {
+            // Standard oscillators (sine, sawtooth, triangle, square)
             generator.setFrequency(frequency);
+        } else if (generator.setBaseFrequency) {
+            // Binaural beats - frequency slider controls carrier
+            generator.setBaseFrequency(frequency);
+        } else if (generator.setCarrierFreq) {
+            // FM synthesizer - frequency slider controls carrier
+            generator.setCarrierFreq(frequency);
+        } else if (generator.setFilterFreq) {
+            // Noise generator - frequency controls filter
+            generator.setFilterFreq(frequency);
+        } else if (generator.setBaseFreq) {
+            // Granular synthesizer
+            generator.setBaseFreq(frequency);
         }
     }
 
@@ -320,6 +333,41 @@ class SynthEngine {
         const generator = this.generators[index];
         if (!generator || !generator.setAlgorithm) return;
         generator.setAlgorithm(alg);
+    }
+
+    /**
+     * Set granular synthesizer parameters
+     */
+    /**
+     * Set infrasound waveform type
+     */
+    setChannelInfrasoundWaveform(index, type) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setWaveform) return;
+        generator.setWaveform(type);
+    }
+
+    setChannelGranularParam(index, param, value) {
+        const generator = this.generators[index];
+        if (!generator) return;
+        
+        switch(param) {
+            case 'density':
+                if (generator.setDensity) generator.setDensity(value);
+                break;
+            case 'spray':
+                if (generator.setSpray) generator.setSpray(value);
+                break;
+            case 'grainSize':
+                if (generator.setGrainSize) generator.setGrainSize(value);
+                break;
+            case 'pitchVariation':
+                if (generator.setPitchVariation) generator.setPitchVariation(value);
+                break;
+            case 'stereoSpread':
+                if (generator.setStereoSpread) generator.setStereoSpread(value);
+                break;
+        }
     }
 
     /**

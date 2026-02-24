@@ -1145,7 +1145,7 @@ class InfrasoundGenerator {
     }
 
     /**
-     * Generate the sine wave buffer for the current frequency
+     * Generate the waveform buffer for the current frequency
      * The buffer contains complete cycles to ensure seamless looping
      */
     generateBuffer() {
@@ -1164,13 +1164,13 @@ class InfrasoundGenerator {
         const cyclesInBuffer = Math.round(totalFreq * this.bufferDuration);
         const actualFreq = cyclesInBuffer / this.bufferDuration;
         
-        // Generate sine wave with complete cycles
-        // phase increments by 2*PI * cyclesInBuffer over the entire buffer
+        // Generate waveform based on type
+        // phase goes from 0 to 2*PI over each cycle
         const phaseIncrement = (2 * Math.PI * cyclesInBuffer) / bufferSize;
         
         for (let i = 0; i < bufferSize; i++) {
-            const phase = i * phaseIncrement;
-            data[i] = Math.sin(phase);
+            const phase = (i * phaseIncrement) % (2 * Math.PI);
+            data[i] = this.generateWaveformSample(phase);
         }
         
         // Store the actual frequency being generated (may differ slightly due to
@@ -1178,6 +1178,32 @@ class InfrasoundGenerator {
         this.actualFrequency = actualFreq;
         
         return buffer;
+    }
+
+    /**
+     * Generate a single sample based on current waveform type
+     * @param {number} phase - Phase from 0 to 2*PI
+     * @returns {number} Sample value from -1 to 1
+     */
+    generateWaveformSample(phase) {
+        switch (this.waveform) {
+            case 'sawtooth':
+                // Sawtooth: linear ramp from -1 to 1 over 0 to 2*PI
+                return (phase / Math.PI) - 1;
+                
+            case 'triangle':
+                // Triangle: linear up then down
+                // From 0 to PI: -1 to 1, from PI to 2*PI: 1 to -1
+                if (phase < Math.PI) {
+                    return (2 * phase / Math.PI) - 1;
+                } else {
+                    return 1 - (2 * (phase - Math.PI) / Math.PI);
+                }
+                
+            case 'sine':
+            default:
+                return Math.sin(phase);
+        }
     }
 
     /**
@@ -1332,14 +1358,14 @@ class InfrasoundGenerator {
     }
 
     /**
-     * Set the waveform type (currently only 'sine' is supported)
-     * @param {string} type - Waveform type ('sine')
+     * Set the waveform type
+     * @param {string} type - Waveform type ('sine', 'sawtooth', 'triangle')
      */
     setWaveform(type) {
-        // Only sine is supported for now - best for cymatics
-        if (type === 'sine') {
+        const validTypes = ['sine', 'sawtooth', 'triangle'];
+        if (validTypes.includes(type)) {
             this.waveform = type;
-            // Buffer would need to be regenerated, but sine is the only option
+            // Regenerate buffer with new waveform if playing
             if (this.isPlaying) {
                 const wasConnected = this.destination;
                 
