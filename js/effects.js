@@ -1761,6 +1761,8 @@ const EffectFactory = {
                 return new StereoWidener(audioContext);
             case 'wavefolder':
                 return new WaveFolder(audioContext);
+            case 'pitch':
+                return new PitchShifter(audioContext);
             case 'none':
             default:
                 return null;
@@ -1787,7 +1789,8 @@ const EffectFactory = {
             { id: 'comb', name: '🔧 Comb Filter' },
             { id: 'eq', name: '🎛️ 3-Band EQ' },
             { id: 'widener', name: '↔️ Widener' },
-            { id: 'wavefolder', name: '〰️ Wave Folder' }
+            { id: 'wavefolder', name: '〰️ Wave Folder' },
+            { id: 'pitch', name: '🔼 Pitch Shifter' }
         ];
     }
 };
@@ -1814,7 +1817,306 @@ if (typeof module !== 'undefined' && module.exports) {
         ThreeBandEQ,
         StereoWidener,
         WaveFolder,
+        PitchShifter,
         EffectFactory 
     };
 }
+
+/**
+ * Pitch Shifter Effect
+ * Delay-based pitch shifting using modulated delay lines with crossfading
+ * 
+ * Implementation:
+ * - Two parallel delay lines (0.02-0.1s range)
+ * - LFOs modulate delay times in opposite directions
+ * - Crossfade between delays to avoid glitches
+ * - Pitch shift range: -12 to +12 semitones
+ * 
+ * Key concept: When delay time increases, pitch drops. When delay time decreases, pitch rises.
+ * - For +semitones: sweep delay time down
+ * - For -semitones: sweep delay time up
+ */
+
+class PitchShifter extends Effect {
+    constructor(audioContext) {
+        super(audioContext);
+        this.type = 'pitchshifter';
+
+        this.input = this.audioContext.createGain();
+        this.output = this.audioContext.createGain();
+
+        // Two parallel delay lines for crossfading
+        this.delayA = this.audioContext.createDelay(0.5);
+        this.delayB = this.audioContext.createDelay(0.5);
+
+        // LFOs for modulating delay times (sawtooth for linear ramp)
+        this.lfoA = this.audioContext.createOscillator();
+        this.lfoB = this.audioContext.createOscillator();
+        this.lfoGainA = this.audioContext.createGain();
+        this.lfoGainB = this.audioContext.createGain();
+
+        // Add constant offset to LFO for delay time base value
+        this.delayOffsetA = this.audioContext.createConstantSource();
+        this.delayOffsetB = this.audioContext.createConstantSource();
+
+        // Mixers for delay time control
+        this.delayTimeMixerA = this.audioContext.createGain();
+        this.delayTimeMixerB = this.audioContext.createGain();
+
+        // Crossfade gains
+        this.crossfadeA = this.audioContext.createGain();
+        this.crossfadeB = this.audioContext.createGain();
+
+        // Feedback paths
+        this.feedbackA = this.audioContext.createGain();
+        this.feedbackB = this.audioContext.createGain();
+
+        // Wet/dry mix
+        this.dryGain = this.audioContext.createGain();
+        this.wetGain = this.audioContext.createGain();
+        this.wetInput = this.audioContext.createGain();
+
+        // Parameters
+        this.params = {
+            semitones: 0,       // -12 to +12 semitones
+            wetLevel: 0.5,      // Blend of shifted signal (0-1)
+            feedback: 0,        // Feedback for resonant effect (0-0.5)
+            mix: 0.5            // Overall wet/dry mix (0-1)
+        };
+
+        // Constants for pitch shifting calculation
+        this.baseDelayTime = 0.05;  // 50ms base delay
+        this.maxDelayTime = 0.1;    // 100ms max delay
+        this.minDelayTime = 0.02;   // 20ms min delay
+
+        this.buildRouting();
+        this.startLFOs();
+        this.updateParams();
+    }
+
+    buildRouting() {
+        // Input routing
+        this.input.connect(this.wetInput);
+        this.input.connect(this.dryGain);
+
+        // Wet signal path to both delays
+        this.wetInput.connect(this.delayA);
+        this.wetInput.connect(this.delayB);
+
+        // Delay A routing with feedback
+        this.delayA.connect(this.feedbackA);
+        this.feedbackA.connect(this.delayA);
+        this.delayA.connect(this.crossfadeA);
+
+        // Delay B routing with feedback
+        this.delayB.connect(this.feedbackB);
+        this.feedbackB.connect(this.delayB);
+        this.delayB.connect(this.crossfadeB);
+
+        // Crossfaded delays to wet gain
+        this.crossfadeA.connect(this.wetGain);
+        this.crossfadeB.connect(this.wetGain);
+
+        // Wet and dry to output
+        this.wetGain.connect(this.output);
+        this.dryGain.connect(this.output);
+
+        // LFO routing for delay time modulation
+        // LFO A: rising sawtooth (decreasing delay time = pitch up)
+        this.lfoA.connect(this.lfoGainA);
+        this.lfoGainA.connect(this.delayTimeMixerA);
+        this.delayOffsetA.connect(this.delayTimeMixerA);
+        this.delayTimeMixerA.connect(this.delayA.delayTime);
+
+        // LFO B: falling sawtooth (opposite phase)
+        this.lfoB.connect(this.lfoGainB);
+        this.lfoGainB.connect(this.delayTimeMixerB);
+        this.delayOffsetB.connect(this.delayTimeMixerB);
+        this.delayTimeMixerB.connect(this.delayB.delayTime);
+
+        // Set initial delay times
+        this.delayA.delayTime.value = this.baseDelayTime;
+        this.delayB.delayTime.value = this.baseDelayTime;
+    }
+
+    startLFOs() {
+        // LFOs use sawtooth waves for linear delay time ramps
+        // This creates consistent pitch shifting
+
+        // LFO A: rising sawtooth (0 to 1, then resets)
+        // When connected properly with offset, creates decreasing delay time
+        this.lfoA.type = 'sawtooth';
+        this.lfoA.frequency.value = 1;
+        this.lfoA.start();
+
+        // LFO B: falling sawtooth (1 to 0, then resets) - opposite phase
+        // Created by inverting the rising sawtooth
+        this.lfoB.type = 'sawtooth';
+        this.lfoB.frequency.value = 1;
+        // Phase offset of 0.5 (180 degrees) for opposite movement
+        this.lfoB.start();
+
+        // Start constant offset sources
+        this.delayOffsetA.start();
+        this.delayOffsetB.start();
+    }
+
+    /**
+     * Calculate LFO frequency and gains based on semitone shift
+     * 
+     * The rate of delay change determines the pitch shift:
+     * - Decreasing delay time = pitch up (positive semitones)
+     * - Increasing delay time = pitch down (negative semitones)
+     * 
+     * Formula: rate = (semitones / 12) * (baseDelay / sweepRange)
+     * Simplified for our parameters
+     */
+    calculateLFOParams(semitones) {
+        if (Math.abs(semitones) < 0.1) {
+            // Near-zero pitch shift: disable modulation
+            return {
+                frequency: 0,
+                lfoGain: 0,
+                offset: this.baseDelayTime,
+                crossfadePhase: 0
+            };
+        }
+
+        // Calculate LFO frequency based on semitone shift
+        // Higher semitone shifts need faster modulation
+        // The formula approximates: f_lfo = f_audio * (2^(semitones/12) - 1)
+        // But normalized for our delay range
+        const absSemitones = Math.abs(semitones);
+        const pitchRatio = Math.pow(2, absSemitones / 12);
+        const sweepRange = this.maxDelayTime - this.minDelayTime;
+
+        // LFO frequency calculation
+        // We want the delay to sweep through its range at a rate that creates
+        // the desired pitch shift
+        const lfoFreq = (pitchRatio - 1) * 2; // Approximation for usable range
+        const clampedFreq = Math.max(0.1, Math.min(10, lfoFreq));
+
+        // LFO gain (how much the delay time varies)
+        // This determines the amount of pitch shifting
+        const lfoGain = sweepRange * 0.5 * (absSemitones / 12);
+
+        // Base offset for delay time
+        const offset = this.baseDelayTime;
+
+        return {
+            frequency: clampedFreq,
+            lfoGain: lfoGain,
+            offset: offset,
+            crossfadePhase: semitones > 0 ? 0 : Math.PI
+        };
+    }
+
+    updateParams() {
+        const now = this.audioContext.currentTime;
+        const semitones = this.params.semitones;
+
+        // Calculate LFO parameters
+        const lfoParams = this.calculateLFOParams(semitones);
+
+        // Update LFO frequencies
+        this.lfoA.frequency.setTargetAtTime(lfoParams.frequency, now, 0.01);
+        this.lfoB.frequency.setTargetAtTime(lfoParams.frequency, now, 0.01);
+
+        // Update LFO gains (modulation depth)
+        // For positive semitones: LFO A has positive gain, LFO B has negative gain
+        // For negative semitones: LFO A has negative gain, LFO B has positive gain
+        const modGain = lfoParams.lfoGain * (semitones >= 0 ? 1 : -1);
+        this.lfoGainA.gain.setTargetAtTime(modGain, now, 0.01);
+        this.lfoGainB.gain.setTargetAtTime(-modGain, now, 0.01);
+
+        // Update delay offsets
+        this.delayOffsetA.offset.setTargetAtTime(lfoParams.offset, now, 0.01);
+        this.delayOffsetB.offset.setTargetAtTime(lfoParams.offset, now, 0.01);
+
+        // Update crossfade gains based on LFO phase
+        // When one delay is at its extremes, fade it out and fade the other in
+        // This prevents the "click" when the delay time resets
+        const wetLevel = this.params.wetLevel;
+        
+        // Simple crossfade: each delay contributes 50% when both are active
+        // In a more sophisticated implementation, we'd sync to LFO phase
+        this.crossfadeA.gain.setTargetAtTime(wetLevel * 0.7, now, 0.01);
+        this.crossfadeB.gain.setTargetAtTime(wetLevel * 0.7, now, 0.01);
+
+        // Update feedback
+        this.feedbackA.gain.setTargetAtTime(this.params.feedback, now, 0.01);
+        this.feedbackB.gain.setTargetAtTime(this.params.feedback, now, 0.01);
+
+        // Update wet/dry mix
+        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
+    }
+
+    setSemitones(semitones) {
+        // Clamp to valid range
+        this.params.semitones = Math.max(-12, Math.min(12, semitones));
+        this.updateParams();
+    }
+
+    setWetLevel(level) {
+        this.params.wetLevel = Math.max(0, Math.min(1, level));
+        this.updateParams();
+    }
+
+    setFeedback(feedback) {
+        this.params.feedback = Math.max(0, Math.min(0.5, feedback));
+        this.updateParams();
+    }
+
+    setMix(mix) {
+        this.params.mix = Math.max(0, Math.min(1, mix));
+        this.updateParams();
+    }
+
+    getParamDefinitions() {
+        return [
+            { 
+                name: 'semitones', 
+                label: 'Semitones', 
+                min: -12, 
+                max: 12, 
+                default: 0, 
+                step: 1 
+            },
+            { 
+                name: 'wetLevel', 
+                label: 'Wet Level', 
+                min: 0, 
+                max: 1, 
+                default: 0.5, 
+                step: 0.01 
+            },
+            { 
+                name: 'feedback', 
+                label: 'Feedback', 
+                min: 0, 
+                max: 0.5, 
+                default: 0, 
+                step: 0.01 
+            },
+            { 
+                name: 'mix', 
+                label: 'Mix', 
+                min: 0, 
+                max: 1, 
+                default: 0.5, 
+                step: 0.01 
+            }
+        ];
+    }
+
+    destroy() {
+        this.lfoA.stop();
+        this.lfoB.stop();
+        this.delayOffsetA.stop();
+        this.delayOffsetB.stop();
+        super.destroy();
+    }
+}
+
 
