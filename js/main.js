@@ -26,6 +26,10 @@ class SynthEngine {
             { enabled: false, volume: 0.5, waveform: 'triangle' },
             { enabled: false, volume: 0.5, waveform: 'square' }
         ];
+        
+        // LFOs for modulation
+        this.lfos = [];
+        this.lfoTargets = new Map(); // Maps "channel-effectIndex-param" to LFO index
     }
 
     /**
@@ -47,6 +51,11 @@ class SynthEngine {
             // Create generators for each channel using factory
             for (let i = 0; i < 4; i++) {
                 this.createChannel(i);
+            }
+            
+            // Create 3 LFOs for modulation
+            for (let i = 0; i < 3; i++) {
+                this.lfos.push(new LFO(this.audioContext));
             }
             
             this.isAudioStarted = true;
@@ -371,9 +380,107 @@ class SynthEngine {
     }
 
     /**
+     * LFO Control Methods
+     */
+    setLFORate(lfoIndex, rate) {
+        if (lfoIndex < 0 || lfoIndex >= this.lfos.length) return;
+        this.lfos[lfoIndex].setRate(rate);
+    }
+    
+    setLFODepth(lfoIndex, depth) {
+        if (lfoIndex < 0 || lfoIndex >= this.lfos.length) return;
+        this.lfos[lfoIndex].setDepth(depth);
+    }
+    
+    setLFOWaveform(lfoIndex, waveform) {
+        if (lfoIndex < 0 || lfoIndex >= this.lfos.length) return;
+        this.lfos[lfoIndex].setWaveform(waveform);
+    }
+    
+    /**
+     * Assign LFO to effect parameter
+     * @param {number} lfoIndex - Which LFO (0-2)
+     * @param {number} channelIndex - Channel (0-3)
+     * @param {number} effectIndex - Effect slot (0-2)
+     * @param {string} paramName - Parameter name (e.g., 'spread', 'time', 'mix')
+     * @param {number} min - Minimum value for modulation
+     * @param {number} max - Maximum value for modulation
+     * @param {boolean} bipolar - Whether LFO is bipolar (-1 to 1) or unipolar (0 to 1)
+     */
+    assignLFOToEffectParam(lfoIndex, channelIndex, effectIndex, paramName, min, max, bipolar = true) {
+        if (lfoIndex < 0 || lfoIndex >= this.lfos.length) return false;
+        
+        const effect = this.effectChains[channelIndex][effectIndex];
+        if (!effect) return false;
+        
+        const lfo = this.lfos[lfoIndex];
+        const targetKey = `${channelIndex}-${effectIndex}-${paramName}`;
+        
+        // Check if parameter has a setter method
+        const setterName = `set${paramName.charAt(0).toUpperCase()}${paramName.slice(1)}`;
+        
+        if (typeof effect[setterName] === 'function') {
+            // Create a callback function that calls the setter
+            const callback = (value) => {
+                effect[setterName](value);
+            };
+            
+            // Remove existing target for this param if any
+            this.unassignLFOFromEffectParam(channelIndex, effectIndex, paramName);
+            
+            // Add new target
+            lfo.addTarget(callback, min, max, bipolar);
+            this.lfoTargets.set(targetKey, { lfoIndex, callback });
+            
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Unassign LFO from effect parameter
+     */
+    unassignLFOFromEffectParam(channelIndex, effectIndex, paramName) {
+        const targetKey = `${channelIndex}-${effectIndex}-${paramName}`;
+        const existing = this.lfoTargets.get(targetKey);
+        
+        if (existing) {
+            const lfo = this.lfos[existing.lfoIndex];
+            lfo.removeTarget(existing.callback);
+            this.lfoTargets.delete(targetKey);
+        }
+    }
+    
+    /**
+     * Check if LFO is assigned to a parameter
+     */
+    isLFOAssigned(channelIndex, effectIndex, paramName) {
+        const targetKey = `${channelIndex}-${effectIndex}-${paramName}`;
+        return this.lfoTargets.has(targetKey);
+    }
+    
+    /**
+     * Get LFO assignment info for a parameter
+     */
+    getLFOAssignment(channelIndex, effectIndex, paramName) {
+        const targetKey = `${channelIndex}-${effectIndex}-${paramName}`;
+        return this.lfoTargets.get(targetKey);
+    }
+
+    /**
      * Set an effect for a channel
      */
     setChannelEffect(channelIndex, effectIndex, effectType) {
+        // Clean up any LFO targets for this effect slot
+        for (let [key, value] of this.lfoTargets) {
+            if (key.startsWith(`${channelIndex}-${effectIndex}-`)) {
+                const lfo = this.lfos[value.lfoIndex];
+                lfo.removeTarget(value.callback);
+                this.lfoTargets.delete(key);
+            }
+        }
+        
         const existingEffect = this.effectChains[channelIndex][effectIndex];
         if (existingEffect) {
             existingEffect.destroy();

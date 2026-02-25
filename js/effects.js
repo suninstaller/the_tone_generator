@@ -52,6 +52,259 @@ class Effect {
 
 
 // ============================================================================
+// LFO (Low Frequency Oscillator) for Parameter Modulation
+// ============================================================================
+
+class LFO {
+    constructor(audioContext) {
+        this.audioContext = audioContext;
+        
+        // Main LFO oscillator
+        this.oscillator = this.audioContext.createOscillator();
+        this.oscillator.type = 'sine';
+        this.oscillator.frequency.value = 1; // 1 Hz default
+        
+        // Depth control (amplitude of LFO)
+        this.depth = this.audioContext.createGain();
+        this.depth.gain.value = 0.5; // 50% depth default
+        
+        // DC offset to allow unipolar modulation (0 to 1 instead of -1 to 1)
+        this.offset = this.audioContext.createConstantSource();
+        this.offset.offset.value = 0; // Start with bipolar (-1 to 1)
+        
+        // Connect: osc -> depth
+        this.oscillator.connect(this.depth);
+        
+        this.oscillator.start();
+        this.offset.start();
+        
+        // Modulation targets
+        this.targets = []; // Array of { param, min, max, bipolar }
+        
+        // Animation frame for updating non-AudioParam targets
+        this.isRunning = false;
+        this.updateLoop = null;
+    }
+    
+    /**
+     * Set LFO rate (frequency)
+     * @param {number} rate - Rate in Hz (0.1 to 20)
+     */
+    setRate(rate) {
+        const now = this.audioContext.currentTime;
+        this.oscillator.frequency.setTargetAtTime(rate, now, 0.01);
+    }
+    
+    /**
+     * Set modulation depth (0 to 1)
+     * @param {number} depth - Depth 0-1
+     */
+    setDepth(depth) {
+        const now = this.audioContext.currentTime;
+        this.depth.gain.setTargetAtTime(depth, now, 0.01);
+    }
+    
+    /**
+     * Set LFO waveform
+     * @param {string} type - 'sine', 'triangle', 'sawtooth', 'square'
+     */
+    setWaveform(type) {
+        this.oscillator.type = type;
+    }
+    
+    /**
+     * Add a modulation target
+     * @param {Object} target - Target object with connect/disconnect methods, or an AudioParam
+     * @param {number} min - Minimum value
+     * @param {number} max - Maximum value  
+     * @param {boolean} bipolar - If true, LFO is -1 to 1. If false, 0 to 1
+     */
+    addTarget(target, min, max, bipolar = true) {
+        // Remove existing target for same param if exists
+        this.removeTarget(target);
+        
+        const targetObj = {
+            param: target,
+            min: min,
+            max: max,
+            bipolar: bipolar,
+            node: null
+        };
+        
+        // If it's an AudioParam, connect directly
+        if (target instanceof AudioParam) {
+            // Create a gain node to scale the LFO to the parameter range
+            const scaleGain = this.audioContext.createGain();
+            const range = max - min;
+            
+            if (bipolar) {
+                // Bipolar: -1 to 1 → min to max
+                // Multiply by range/2, then offset by (max+min)/2
+                scaleGain.gain.value = range / 2;
+                targetObj.node = scaleGain;
+                
+                // Create offset
+                const offset = this.audioContext.createConstantSource();
+                offset.offset.value = (max + min) / 2;
+                offset.start();
+                
+                this.depth.disconnect();
+                this.depth.connect(scaleGain);
+                scaleGain.connect(target);
+                offset.connect(target);
+            } else {
+                // Unipolar: 0 to 1 → min to max (only positive half)
+                scaleGain.gain.value = range;
+                targetObj.node = scaleGain;
+                
+                this.depth.disconnect();
+                this.depth.connect(scaleGain);
+                scaleGain.connect(target);
+                
+                // Add DC offset for min value
+                const offset = this.audioContext.createConstantSource();
+                offset.offset.value = min;
+                offset.start();
+                offset.connect(target);
+            }
+        } else {
+            // For non-AudioParam targets (effect setters), we'll use requestAnimationFrame
+            targetObj.node = null;
+        }
+        
+        this.targets.push(targetObj);
+        
+        // Start update loop if we have non-AudioParam targets
+        if (!this.isRunning && this.hasNonAudioParamTargets()) {
+            this.startUpdateLoop();
+        }
+        
+        return targetObj;
+    }
+    
+    /**
+     * Remove a modulation target
+     * @param {Object} target - The target to remove
+     */
+    removeTarget(target) {
+        const index = this.targets.findIndex(t => t.param === target);
+        if (index !== -1) {
+            const targetObj = this.targets[index];
+            if (targetObj.node) {
+                targetObj.node.disconnect();
+            }
+            this.targets.splice(index, 1);
+        }
+        
+        // Stop update loop if no more non-AudioParam targets
+        if (this.targets.length === 0 || !this.hasNonAudioParamTargets()) {
+            this.stopUpdateLoop();
+        }
+    }
+    
+    hasNonAudioParamTargets() {
+        return this.targets.some(t => !(t.param instanceof AudioParam));
+    }
+    
+    startUpdateLoop() {
+        if (this.isRunning) return;
+        this.isRunning = true;
+        
+        const update = () => {
+            if (!this.isRunning) return;
+            
+            // Get current LFO value
+            // Since we can't read AudioParam values directly,
+            // we calculate it based on time
+            const now = this.audioContext.currentTime;
+            const freq = this.oscillator.frequency.value;
+            const phase = (now * freq * 2 * Math.PI) % (2 * Math.PI);
+            
+            let lfoValue;
+            switch (this.oscillator.type) {
+                case 'sine':
+                    lfoValue = Math.sin(phase);
+                    break;
+                case 'triangle':
+                    lfoValue = phase < Math.PI ? (2 * phase / Math.PI) - 1 : 1 - (2 * (phase - Math.PI) / Math.PI);
+                    break;
+                case 'sawtooth':
+                    lfoValue = (phase / Math.PI) - 1;
+                    break;
+                case 'square':
+                    lfoValue = phase < Math.PI ? 1 : -1;
+                    break;
+                default:
+                    lfoValue = Math.sin(phase);
+            }
+            
+            // Apply depth
+            lfoValue *= this.depth.gain.value;
+            
+            // Update non-AudioParam targets
+            this.targets.forEach(target => {
+                if (!(target.param instanceof AudioParam)) {
+                    let value;
+                    if (target.bipolar) {
+                        value = ((lfoValue + 1) / 2) * (target.max - target.min) + target.min;
+                    } else {
+                        value = (lfoValue + 1) / 2 * (target.max - target.min) + target.min;
+                    }
+                    
+                    // Call the setter function
+                    if (typeof target.param === 'function') {
+                        target.param(value);
+                    }
+                }
+            });
+            
+            this.updateLoop = requestAnimationFrame(update);
+        };
+        
+        update();
+    }
+    
+    stopUpdateLoop() {
+        this.isRunning = false;
+        if (this.updateLoop) {
+            cancelAnimationFrame(this.updateLoop);
+            this.updateLoop = null;
+        }
+    }
+    
+    /**
+     * Start the LFO
+     */
+    start() {
+        // Already started in constructor, but reset phase if needed
+    }
+    
+    /**
+     * Stop the LFO
+     */
+    stop() {
+        this.oscillator.stop();
+        this.stopUpdateLoop();
+    }
+    
+    /**
+     * Destroy and cleanup
+     */
+    destroy() {
+        this.stopUpdateLoop();
+        this.targets.forEach(t => {
+            if (t.node) t.node.disconnect();
+        });
+        this.targets = [];
+        this.oscillator.stop();
+        this.oscillator.disconnect();
+        this.depth.disconnect();
+        this.offset.stop();
+    }
+}
+
+
+// ============================================================================
 // EXISTING EFFECTS
 // ============================================================================
 
@@ -2961,6 +3214,7 @@ class TimeStretch extends Effect {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { 
         Effect, 
+        LFO,
         RingModulator, 
         Flanger, 
         TapeDelay, 

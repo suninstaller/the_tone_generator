@@ -614,6 +614,7 @@ class UIManager {
         params.forEach(param => {
             const paramDiv = document.createElement('div');
             paramDiv.className = 'effect-param';
+            paramDiv.dataset.paramName = param.name;
             
             const label = document.createElement('label');
             label.textContent = `${param.label}: `;
@@ -622,12 +623,32 @@ class UIManager {
             valueSpan.textContent = this.formatParamValue(param.default, param.step);
             label.appendChild(valueSpan);
             
+            // Add Mod button
+            const modBtn = document.createElement('button');
+            modBtn.className = 'mod-button';
+            modBtn.textContent = 'Mod';
+            modBtn.title = 'Assign LFO modulation';
+            
+            // Check if already modulated
+            if (this.synth.isLFOAssigned(channelIndex, effectIndex, param.name)) {
+                modBtn.classList.add('active');
+                const assignment = this.synth.getLFOAssignment(channelIndex, effectIndex, param.name);
+                modBtn.textContent = `LFO ${assignment.lfoIndex + 1}`;
+            }
+            
+            modBtn.addEventListener('click', () => {
+                this.showModPanel(paramDiv, channelIndex, effectIndex, param, modBtn);
+            });
+            
+            label.appendChild(modBtn);
+            
             const slider = document.createElement('input');
             slider.type = 'range';
             slider.min = param.min;
             slider.max = param.max;
             slider.step = param.step;
             slider.value = param.default;
+            slider.className = 'param-slider';
             
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
@@ -639,6 +660,112 @@ class UIManager {
             paramDiv.appendChild(slider);
             paramContainer.appendChild(paramDiv);
         });
+    }
+    
+    /**
+     * Show modulation assignment panel for an effect parameter
+     */
+    showModPanel(paramDiv, channelIndex, effectIndex, param, modBtn) {
+        // Remove existing mod panels
+        document.querySelectorAll('.mod-panel').forEach(p => p.remove());
+        
+        // Check if already assigned
+        const existingAssignment = this.synth.getLFOAssignment(channelIndex, effectIndex, param.name);
+        
+        const panel = document.createElement('div');
+        panel.className = 'mod-panel';
+        
+        if (existingAssignment) {
+            // Show unassign option
+            panel.innerHTML = `
+                <label>LFO ${existingAssignment.lfoIndex + 1} is modulating this parameter</label>
+                <button class="btn-cancel">Unassign</button>
+            `;
+            panel.querySelector('.btn-cancel').addEventListener('click', () => {
+                this.synth.unassignLFOFromEffectParam(channelIndex, effectIndex, param.name);
+                modBtn.textContent = 'Mod';
+                modBtn.classList.remove('active');
+                panel.remove();
+            });
+        } else {
+            // Show assignment options
+            const label = document.createElement('label');
+            label.textContent = 'Assign LFO:';
+            panel.appendChild(label);
+            
+            const lfoSelect = document.createElement('select');
+            lfoSelect.innerHTML = `
+                <option value="0">LFO 1</option>
+                <option value="1">LFO 2</option>
+                <option value="2">LFO 3</option>
+            `;
+            panel.appendChild(lfoSelect);
+            
+            const rangeLabel = document.createElement('label');
+            rangeLabel.textContent = 'Modulation Range:';
+            panel.appendChild(rangeLabel);
+            
+            const minSlider = document.createElement('input');
+            minSlider.type = 'range';
+            minSlider.min = param.min;
+            minSlider.max = param.max;
+            minSlider.value = param.min;
+            minSlider.step = param.step;
+            panel.appendChild(minSlider);
+            
+            const minDisplay = document.createElement('div');
+            minDisplay.textContent = `Min: ${param.min}`;
+            panel.appendChild(minDisplay);
+            
+            const maxSlider = document.createElement('input');
+            maxSlider.type = 'range';
+            maxSlider.min = param.min;
+            maxSlider.max = param.max;
+            maxSlider.value = param.max;
+            maxSlider.step = param.step;
+            panel.appendChild(maxSlider);
+            
+            const maxDisplay = document.createElement('div');
+            maxDisplay.textContent = `Max: ${param.max}`;
+            panel.appendChild(maxDisplay);
+            
+            minSlider.addEventListener('input', () => {
+                minDisplay.textContent = `Min: ${minSlider.value}`;
+            });
+            
+            maxSlider.addEventListener('input', () => {
+                maxDisplay.textContent = `Max: ${maxSlider.value}`;
+            });
+            
+            const btnAssign = document.createElement('button');
+            btnAssign.className = 'btn-assign';
+            btnAssign.textContent = 'Assign';
+            btnAssign.addEventListener('click', () => {
+                const lfoIndex = parseInt(lfoSelect.value);
+                const min = parseFloat(minSlider.value);
+                const max = parseFloat(maxSlider.value);
+                
+                const success = this.synth.assignLFOToEffectParam(
+                    lfoIndex, channelIndex, effectIndex, param.name, min, max, true
+                );
+                
+                if (success) {
+                    modBtn.textContent = `LFO ${lfoIndex + 1}`;
+                    modBtn.classList.add('active');
+                }
+                
+                panel.remove();
+            });
+            panel.appendChild(btnAssign);
+            
+            const btnCancel = document.createElement('button');
+            btnCancel.className = 'btn-cancel';
+            btnCancel.textContent = 'Cancel';
+            btnCancel.addEventListener('click', () => panel.remove());
+            panel.appendChild(btnCancel);
+        }
+        
+        paramDiv.appendChild(panel);
     }
 
     /**
@@ -657,6 +784,47 @@ class UIManager {
         masterVol.addEventListener('input', (e) => {
             const vol = parseFloat(e.target.value) / 100;
             this.synth.setMasterVolume(vol);
+        });
+        
+        // Set up LFO controls
+        this.setupLFOControls();
+    }
+    
+    /**
+     * Set up LFO controls
+     */
+    setupLFOControls() {
+        // LFO Rate controls
+        document.querySelectorAll('.lfo-rate').forEach(slider => {
+            const lfoIndex = parseInt(slider.dataset.lfo);
+            const display = document.querySelector(`.lfo${lfoIndex + 1}-rate-val`);
+            
+            slider.addEventListener('input', (e) => {
+                const rate = parseFloat(e.target.value);
+                if (display) display.textContent = rate.toFixed(1);
+                this.synth.setLFORate(lfoIndex, rate);
+            });
+        });
+        
+        // LFO Depth controls
+        document.querySelectorAll('.lfo-depth').forEach(slider => {
+            const lfoIndex = parseInt(slider.dataset.lfo);
+            const display = document.querySelector(`.lfo${lfoIndex + 1}-depth-val`);
+            
+            slider.addEventListener('input', (e) => {
+                const depth = parseFloat(e.target.value) / 100;
+                if (display) display.textContent = Math.round(depth * 100);
+                this.synth.setLFODepth(lfoIndex, depth);
+            });
+        });
+        
+        // LFO Waveform controls
+        document.querySelectorAll('.lfo-waveform').forEach(select => {
+            const lfoIndex = parseInt(select.dataset.lfo);
+            
+            select.addEventListener('change', (e) => {
+                this.synth.setLFOWaveform(lfoIndex, e.target.value);
+            });
         });
     }
 
