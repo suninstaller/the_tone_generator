@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head><title>Debug</title></head>
+<body>
+<button onclick="test()">Test 4 Channels</button>
+<div id="out"></div>
+<script>
+const out = document.getElementById('out');
+const log = (msg) => out.innerHTML += msg + '<br>';
+
+async function test() {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioContext();
+    
+    log('AudioContext state: ' + ctx.state);
+    log('Sample rate: ' + ctx.sampleRate);
+    
+    const master = ctx.createGain();
+    master.connect(ctx.destination);
+    
+    // Create 4 oscillators
+    for (let i = 0; i < 4; i++) {
+        try {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            osc.frequency.value = 200 + i * 50;
+            gain.gain.value = 0.1;
+            
+            osc.connect(gain);
+            gain.connect(master);
+            
+            osc.start();
+            log(`Channel ${i}: Started at ${osc.frequency.value}Hz`);
+        } catch (e) {
+            log(`Channel ${i}: ERROR - ${e.message}`);
+        }
+    }
+    
+    // Check destination
+    log('Master gain connections: should be 4');
+    
+    // Check context
+    log('Context currentTime: ' + ctx.currentTime);
+}
+</script>
+</body>
+</html>

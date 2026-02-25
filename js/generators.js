@@ -576,7 +576,7 @@ class BinauralBeatsGenerator {
 
     setBaseFrequency(freq) {
         this.baseFreq = freq;
-        if (this.isPlaying) {
+        if (this.isPlaying && this.oscLeft && this.oscRight) {
             const now = this.audioContext.currentTime;
             this.oscLeft.frequency.setTargetAtTime(this.baseFreq - (this.beatFreq / 2), now, 0.01);
             this.oscRight.frequency.setTargetAtTime(this.baseFreq + (this.beatFreq / 2), now, 0.01);
@@ -585,7 +585,7 @@ class BinauralBeatsGenerator {
 
     setBeatFrequency(freq) {
         this.beatFreq = freq;
-        if (this.isPlaying) {
+        if (this.isPlaying && this.oscLeft && this.oscRight) {
             const now = this.audioContext.currentTime;
             this.oscLeft.frequency.setTargetAtTime(this.baseFreq - (this.beatFreq / 2), now, 0.01);
             this.oscRight.frequency.setTargetAtTime(this.baseFreq + (this.beatFreq / 2), now, 0.01);
