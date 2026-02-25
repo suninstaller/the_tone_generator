@@ -411,14 +411,52 @@ class UIManager {
         
         waveSelect.addEventListener('change', (e) => {
             this.synth.setChannelInfrasoundWaveform(channelIndex, e.target.value);
+            // Show/hide duty slider
+            const dutySection = infraDiv.querySelector('.infra-duty-section');
+            if (e.target.value === 'square') {
+                dutySection.style.display = 'block';
+            } else {
+                dutySection.style.display = 'none';
+            }
         });
+        
+        // Duty cycle slider for square wave (PWM)
+        const dutySection = document.createElement('div');
+        dutySection.className = 'infra-duty-section';
+        dutySection.style.display = 'none'; // Hidden by default
+        dutySection.style.marginTop = '10px';
+        
+        const dutyLabel = document.createElement('label');
+        dutyLabel.innerHTML = 'Duty: <span class="duty-val">50</span>% <small>(PWM)</small>';
+        
+        const dutySlider = document.createElement('input');
+        dutySlider.type = 'range';
+        dutySlider.className = 'infra-duty';
+        dutySlider.min = '10';
+        dutySlider.max = '90';
+        dutySlider.value = '50';
+        
+        dutySlider.addEventListener('input', (e) => {
+            const duty = parseInt(e.target.value);
+            dutyLabel.querySelector('.duty-val').textContent = duty;
+            this.synth.setChannelInfrasoundDuty(channelIndex, duty / 100);
+        });
+        
+        dutySection.appendChild(dutyLabel);
+        dutySection.appendChild(dutySlider);
         
         infraDiv.appendChild(waveLabel);
         infraDiv.appendChild(waveSelect);
+        infraDiv.appendChild(dutySection);
         
         // Insert after frequency section
         const freqSection = freqSlider.parentElement;
         freqSection.insertAdjacentElement('afterend', infraDiv);
+        
+        // Show duty if square is already selected
+        if (waveSelect.value === 'square') {
+            dutySection.style.display = 'block';
+        }
     }
 
     /**

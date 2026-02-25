@@ -1122,7 +1122,8 @@ class InfrasoundGenerator {
         // Parameters
         this.frequency = 8;        // 0.5 to 200 Hz
         this.fineTune = 0;         // -0.50 to +0.50 Hz
-        this.waveform = 'sine';    // Only sine for now (best for cymatics)
+        this.waveform = 'sine';    // sine, sawtooth, triangle, square
+        this.dutyCycle = 0.5;      // 0.1 to 0.9 (for square wave PWM)
         this.volume = 0.7;         // 0 to 1
         
         // Buffer configuration
@@ -1199,6 +1200,11 @@ class InfrasoundGenerator {
                 } else {
                     return 1 - (2 * (phase - Math.PI) / Math.PI);
                 }
+                
+            case 'square':
+                // Square: high for duty cycle portion, low for rest
+                // dutyCycle 0.5 = perfect square, 0.1 = narrow pulse, 0.9 = wide pulse
+                return (phase / (2 * Math.PI)) < this.dutyCycle ? 1 : -1;
                 
             case 'sine':
             default:
@@ -1359,10 +1365,10 @@ class InfrasoundGenerator {
 
     /**
      * Set the waveform type
-     * @param {string} type - Waveform type ('sine', 'sawtooth', 'triangle')
+     * @param {string} type - Waveform type ('sine', 'sawtooth', 'triangle', 'square')
      */
     setWaveform(type) {
-        const validTypes = ['sine', 'sawtooth', 'triangle'];
+        const validTypes = ['sine', 'sawtooth', 'triangle', 'square'];
         if (validTypes.includes(type)) {
             this.waveform = type;
             // Regenerate buffer with new waveform if playing
@@ -1377,6 +1383,26 @@ class InfrasoundGenerator {
                 
                 this.bufferSource.start();
             }
+        }
+    }
+    
+    /**
+     * Set duty cycle for square wave (PWM)
+     * @param {number} duty - Duty cycle 0.1 to 0.9 (10% to 90%)
+     */
+    setDutyCycle(duty) {
+        this.dutyCycle = Math.max(0.1, Math.min(0.9, duty));
+        // Regenerate buffer if playing and square wave
+        if (this.isPlaying && this.waveform === 'square') {
+            const wasConnected = this.destination;
+            
+            this.createBufferSource();
+            
+            if (wasConnected && this.gainNode) {
+                this.gainNode.connect(wasConnected);
+            }
+            
+            this.bufferSource.start();
         }
     }
 

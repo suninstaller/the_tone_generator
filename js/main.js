@@ -355,6 +355,12 @@ class SynthEngine {
         if (!generator || !generator.setWaveform) return;
         generator.setWaveform(type);
     }
+    
+    setChannelInfrasoundDuty(index, duty) {
+        const generator = this.generators[index];
+        if (!generator || !generator.setDutyCycle) return;
+        generator.setDutyCycle(duty);
+    }
 
     setChannelGranularParam(index, param, value) {
         const generator = this.generators[index];
