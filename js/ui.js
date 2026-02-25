@@ -1186,31 +1186,22 @@ class UIManager {
     }
 
     /**
-     * Set up the audio visualizer
+     * Set up the audio visualizer with toggle between waveform and spectrum
      */
     setupVisualizer() {
         const canvas = document.getElementById('visualizer');
         const ctx = canvas.getContext('2d');
+        const toggleBtn = document.getElementById('vis-toggle');
         
-        const draw = () => {
-            requestAnimationFrame(draw);
-            
-            const analyser = this.synth.getAnalyser();
-            if (!analyser) {
-                // Clear canvas if no audio
-                ctx.fillStyle = '#1a1a2e';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                return;
-            }
-            
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            analyser.getByteTimeDomainData(dataArray);
-            
-            // Clear canvas
-            ctx.fillStyle = '#1a1a2e';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
+        // Mode: 'waveform' or 'spectrum'
+        let mode = 'waveform';
+        
+        toggleBtn.addEventListener('click', () => {
+            mode = mode === 'waveform' ? 'spectrum' : 'waveform';
+            toggleBtn.textContent = mode === 'waveform' ? '📊 Spectrum' : '〰️ Waveform';
+        });
+        
+        const drawWaveform = (analyser, dataArray, bufferLength) => {
             // Draw waveform
             ctx.lineWidth = 2;
             ctx.strokeStyle = '#00d9ff';
@@ -1241,6 +1232,62 @@ class UIManager {
             gradient.addColorStop(1, 'rgba(233, 69, 96, 0.1)');
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+        };
+        
+        const drawSpectrum = (analyser, dataArray, bufferLength) => {
+            const barCount = 64;
+            const barWidth = canvas.width / barCount;
+            const binStep = Math.floor(bufferLength / barCount);
+            
+            // Draw spectrum bars
+            for (let i = 0; i < barCount; i++) {
+                const binIndex = i * binStep;
+                const value = dataArray[binIndex];
+                const percent = value / 255;
+                const barHeight = percent * canvas.height;
+                
+                // Color based on frequency (low = red, mid = cyan, high = pink)
+                const hue = 180 + (i / barCount) * 160; // 180-340 (cyan to pink/red)
+                ctx.fillStyle = `hsla(${hue}, 80%, 60%, 0.8)`;
+                
+                // Draw bar from bottom
+                const x = i * barWidth;
+                const y = canvas.height - barHeight;
+                ctx.fillRect(x + 1, y, barWidth - 2, barHeight);
+            }
+            
+            // Add glow effect
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#e94560';
+        };
+        
+        const draw = () => {
+            requestAnimationFrame(draw);
+            
+            const analyser = this.synth.getAnalyser();
+            if (!analyser) {
+                // Clear canvas if no audio
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.shadowBlur = 0;
+                return;
+            }
+            
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            // Clear canvas
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.shadowBlur = 0;
+            
+            if (mode === 'waveform') {
+                analyser.getByteTimeDomainData(dataArray);
+                drawWaveform(analyser, dataArray, bufferLength);
+            } else {
+                analyser.getByteFrequencyData(dataArray);
+                drawSpectrum(analyser, dataArray, bufferLength);
+            }
         };
         
         draw();

@@ -316,6 +316,28 @@ input:checked + .toggle-slider:before {
     border: 1px solid var(--border);
 }
 
+.visualizer-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 5px;
+}
+
+.vis-toggle {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.vis-toggle:hover {
+    background: var(--accent);
+    color: var(--text);
+}
+
 /* LFO Controls */
 .lfo-controls {
     background: var(--bg-secondary);
