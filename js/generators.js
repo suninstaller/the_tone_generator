@@ -172,6 +172,7 @@ class ToneGenerator {
      */
     start(destination) {
         if (this.isPlaying) return;
+        if (!this.audioContext) return;
 
         const output = this.createOscillator();
         if (destination) {
@@ -362,6 +363,7 @@ class NoiseGenerator {
 
     start(destination) {
         if (this.isPlaying) return;
+        if (!this.audioContext) return;
 
         const output = this.createNoiseNode();
         if (destination) {
@@ -537,6 +539,10 @@ class BinauralBeatsGenerator {
 
     start(destination) {
         if (this.isPlaying) return;
+        if (!this.audioContext) {
+            console.warn('BinauralBeatsGenerator: Cannot start without audio context');
+            return;
+        }
         
         const output = this.createBinauralOscillators();
         if (destination) {
@@ -725,6 +731,7 @@ class FMSynthesizer {
 
     start(destination) {
         if (this.isPlaying) return;
+        if (!this.audioContext) return;
         
         const output = this.createFMOscillators();
         if (destination) {
@@ -1254,6 +1261,7 @@ class InfrasoundGenerator {
      */
     start(destination) {
         if (this.isPlaying) return;
+        if (!this.audioContext) return;
         
         this.destination = destination;
         
