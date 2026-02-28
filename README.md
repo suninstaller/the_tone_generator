@@ -72,29 +72,34 @@ Best experienced with headphones! Creates two slightly different frequencies in 
 
 ## 🚀 Getting Started
 
-1. **Open `index.html`** in a modern web browser (Chrome, Firefox, Safari, Edge)
+1. **Run a local web server** in the project directory (required for AudioWorklets and JS modules):
+   - **Using Python:** `python3 -m http.server 8000`
+   - **Using Node.js:** `npx serve`
+   - **Using VS Code:** Install the **Live Server** extension and click "Go Live"
 
-2. **Click "START AUDIO"** to initialize the audio engine
+2. **Open the local address** in your browser (e.g., `http://localhost:8000`)
 
-3. **Enable channels** using the toggle switches
+3. **Click "START AUDIO"** to initialize the audio engine
 
-4. **Select generator type:**
+4. **Enable channels** using the toggle switches
+
+5. **Select generator type:**
    - Traditional oscillators: Sine, Sawtooth, Triangle, Square
    - Noise with filter control
    - Binaural beats for brainwave entrainment
 
-5. **Adjust settings:**
+6. **Adjust settings:**
    - Set frequency/carrier (20Hz - 2000Hz)
    - For binaural: set beat frequency (1-50 Hz) or use brainwave presets
    - For square waves: adjust duty cycle (1% - 99%)
    - Adjust volume
 
-6. **Add effects:**
+7. **Add effects:**
    - Select effect from dropdown
    - Adjust effect parameters in real-time
    - Chain up to 3 effects per channel
 
-7. **Use presets** for quick sound exploration
+8. **Use presets** for quick sound exploration
 
 ## 🧘 Using Binaural Beats
 
