@@ -1,5 +1,5 @@
 /**
- * Main Application Module
+ * Main Application Module - v1.0.1
  * Initializes the synthesizer engine and connects all components
  */
 
@@ -10,6 +10,9 @@ class SynthEngine {
         
         // 4 generators (one per channel)
         this.generators = [];
+        
+        // Persistent gain nodes for each channel to avoid clicks during routing
+        this.channelGains = [];
         
         // Effect chains for each channel (3 effects per channel max)
         this.effectChains = [[], [], [], []];
@@ -38,6 +41,11 @@ class SynthEngine {
     async start() {
         if (this.isAudioStarted) return;
         
+        // Check for file:// protocol which blocks AudioWorklets
+        if (window.location.protocol === 'file:') {
+            alert('SECURITY RESTRICTION: This synthesizer uses high-performance AudioWorklets which are blocked when opening files directly. \n\nPlease run this project through a local web server (e.g., "python3 -m http.server" or "npx serve") to enable all features.');
+        }
+
         try {
             const AudioContext = window.AudioContext || window.webkitAudioContext;
             this.audioContext = new AudioContext();
@@ -46,16 +54,33 @@ class SynthEngine {
                 await this.audioContext.resume();
             }
             
+            // Load AudioWorklets
+            this.workletsLoaded = false;
+            try {
+                await this.audioContext.audioWorklet.addModule('js/worklets/grain-player.js');
+                await this.audioContext.audioWorklet.addModule('js/worklets/infrasound-processor.js');
+                this.workletsLoaded = true;
+                console.log('AudioWorklets loaded');
+            } catch (e) {
+                console.error('Failed to load AudioWorklets:', e);
+            }
+            
             this.setupMasterChain();
             
-            // Create generators for each channel using factory
+            // Create channel gains and generators for each channel
             for (let i = 0; i < 4; i++) {
+                const cg = this.audioContext.createGain();
+                cg.gain.value = 1.0;
+                this.channelGains[i] = cg;
                 this.createChannel(i);
             }
             
             // Create 3 LFOs for modulation
+            this.lfos = [];
             for (let i = 0; i < 3; i++) {
-                this.lfos.push(new LFO(this.audioContext));
+                const lfo = new LFO(this.audioContext);
+                console.log(`Engine: LFO ${i} created. setRate code:`, lfo.setRate.toString());
+                this.lfos.push(lfo);
             }
             
             this.isAudioStarted = true;
@@ -77,6 +102,16 @@ class SynthEngine {
             if (gen) gen.destroy();
         });
         this.generators = [];
+        
+        this.lfos.forEach(lfo => {
+            if (lfo && lfo.destroy) lfo.destroy();
+        });
+        this.lfos = [];
+        
+        this.channelGains.forEach(cg => {
+            if (cg) cg.disconnect();
+        });
+        this.channelGains = [];
         
         this.effectChains.forEach(chain => {
             chain.forEach(effect => {
@@ -138,10 +173,11 @@ class SynthEngine {
         const generator = GeneratorFactory.create(waveform, this.audioContext);
         this.generators[index] = generator;
         
-        // Connect generator directly to master initially
+        // Connect generator through its channel gain
         if (this.channelSettings[index].enabled) {
-            generator.start(this.masterGain);
+            generator.start(this.channelGains[index]);
             generator.setVolume(this.channelSettings[index].volume);
+            this.rebuildEffectChain(index);
         }
     }
 
@@ -149,42 +185,63 @@ class SynthEngine {
      * Rebuild the effect chain for a channel
      */
     rebuildEffectChain(channelIndex) {
-        const generator = this.generators[channelIndex];
-        if (!generator) return;
+        const channelGain = this.channelGains[channelIndex];
+        if (!channelGain) return;
         
-        const outputNode = generator.getOutput();
-        if (!outputNode) return;
+        // Track rebuilds to avoid race conditions during batch updates
+        if (!this.pendingRebuilds) this.pendingRebuilds = new Map();
         
-        // Disconnect output from wherever it was connected
-        try {
-            outputNode.disconnect();
-        } catch (e) {
-            // Might not be connected, that's ok
+        const now = this.audioContext.currentTime;
+        
+        // Use a fast ramp to avoid clicks during reconnection
+        channelGain.gain.setTargetAtTime(0, now, 0.005);
+        
+        // Cancel existing pending rebuild for this channel if any
+        if (this.pendingRebuilds.has(channelIndex)) {
+            clearTimeout(this.pendingRebuilds.get(channelIndex));
         }
         
-        const effects = this.effectChains[channelIndex].filter(e => e !== null);
-        
-        if (effects.length > 0) {
-            // Connect generator -> first effect
-            outputNode.connect(effects[0].getInput());
+        const timeoutId = setTimeout(() => {
+            this.pendingRebuilds.delete(channelIndex);
+            if (!this.audioContext || !this.isAudioStarted) return;
             
-            // Chain effects together
-            for (let i = 0; i < effects.length - 1; i++) {
+            // Disconnect channel gain from wherever it was connected
+            try {
+                channelGain.disconnect();
+            } catch (e) {}
+            
+            const effects = this.effectChains[channelIndex].filter(e => e !== null);
+            
+            if (effects.length > 0) {
+                // Connect channel gain -> first effect
+                channelGain.connect(effects[0].getInput());
+                
+                // Chain effects together
+                for (let i = 0; i < effects.length - 1; i++) {
+                    try {
+                        effects[i].disconnect();
+                    } catch (e) {}
+                    effects[i].connect(effects[i + 1].getInput());
+                }
+                
+                // Connect last effect -> master
+                const lastEffect = effects[effects.length - 1];
                 try {
-                    effects[i].disconnect();
+                    lastEffect.disconnect();
                 } catch (e) {}
-                effects[i].connect(effects[i + 1].getInput());
+                lastEffect.connect(this.masterGain);
+            } else {
+                // No effects - connect directly to master
+                channelGain.connect(this.masterGain);
             }
             
-            // Connect last effect -> master
-            try {
-                effects[effects.length - 1].disconnect();
-            } catch (e) {}
-            effects[effects.length - 1].connect(this.masterGain);
-        } else {
-            // No effects - connect directly to master
-            outputNode.connect(this.masterGain);
-        }
+            // Ramp back up
+            const now2 = this.audioContext.currentTime;
+            channelGain.gain.cancelScheduledValues(now2);
+            channelGain.gain.setTargetAtTime(1.0, now2, 0.01);
+        }, 25); // Slightly longer than the ramp-down time (5 * 0.005 = 25ms)
+        
+        this.pendingRebuilds.set(channelIndex, timeoutId);
     }
 
     /**
@@ -198,7 +255,7 @@ class SynthEngine {
         
         if (enabled) {
             if (!generator.getIsPlaying()) {
-                generator.start(this.masterGain);
+                generator.start(this.channelGains[index]);
                 this.rebuildEffectChain(index);
             }
         } else {
@@ -215,6 +272,15 @@ class SynthEngine {
         
         // Update settings
         this.channelSettings[index].waveform = waveform;
+        
+        // Clean up channel LFO targets
+        for (let [key, value] of this.lfoTargets) {
+            if (key.startsWith(`chan-${index}-`)) {
+                const lfo = this.lfos[value.lfoIndex];
+                lfo.removeTarget(value.callback);
+                this.lfoTargets.delete(key);
+            }
+        }
         
         // Destroy old generator
         if (this.generators[index]) {
@@ -233,7 +299,7 @@ class SynthEngine {
         
         // Restart if it was playing
         if (wasEnabled && wasPlaying) {
-            generator.start(this.masterGain);
+            generator.start(this.channelGains[index]);
         }
     }
 
@@ -389,7 +455,11 @@ class SynthEngine {
      * LFO Control Methods
      */
     setLFORate(lfoIndex, rate) {
-        if (lfoIndex < 0 || lfoIndex >= this.lfos.length) return;
+        console.log(`Engine: Setting LFO ${lfoIndex} rate to ${rate}. Active LFOs: ${this.lfos.length}`);
+        if (lfoIndex < 0 || lfoIndex >= this.lfos.length) {
+            console.error(`Engine: LFO index ${lfoIndex} out of bounds!`);
+            return;
+        }
         this.lfos[lfoIndex].setRate(rate);
     }
     
@@ -475,6 +545,53 @@ class SynthEngine {
     }
 
     /**
+     * Assign LFO to channel (generator) parameter
+     */
+    assignLFOToChannelParam(lfoIndex, channelIndex, paramName, min, max, bipolar = true) {
+        if (lfoIndex < 0 || lfoIndex >= this.lfos.length) return false;
+        
+        const generator = this.generators[channelIndex];
+        if (!generator) return false;
+        
+        const lfo = this.lfos[lfoIndex];
+        const targetKey = `chan-${channelIndex}-${paramName}`;
+        
+        // Check if parameter has a setter method
+        const setterName = `set${paramName.charAt(0).toUpperCase()}${paramName.slice(1)}`;
+        
+        if (typeof generator[setterName] === 'function') {
+            const callback = (value) => {
+                generator[setterName](value);
+            };
+            
+            this.unassignLFOFromChannelParam(channelIndex, paramName);
+            lfo.addTarget(callback, min, max, bipolar);
+            this.lfoTargets.set(targetKey, { lfoIndex, callback });
+            return true;
+        }
+        return false;
+    }
+    
+    unassignLFOFromChannelParam(channelIndex, paramName) {
+        const targetKey = `chan-${channelIndex}-${paramName}`;
+        const existing = this.lfoTargets.get(targetKey);
+        
+        if (existing) {
+            const lfo = this.lfos[existing.lfoIndex];
+            lfo.removeTarget(existing.callback);
+            this.lfoTargets.delete(targetKey);
+        }
+    }
+    
+    isChannelLFOAssigned(channelIndex, paramName) {
+        return this.lfoTargets.has(`chan-${channelIndex}-${paramName}`);
+    }
+    
+    getChannelLFOAssignment(channelIndex, paramName) {
+        return this.lfoTargets.get(`chan-${channelIndex}-${paramName}`);
+    }
+
+    /**
      * Set an effect for a channel
      */
     setChannelEffect(channelIndex, effectIndex, effectType) {
@@ -523,6 +640,199 @@ class SynthEngine {
     getEffectInstance(effectType) {
         if (!this.audioContext) return null;
         return EffectFactory.create(effectType, this.audioContext);
+    }
+
+    /**
+     * Get the current state of the entire synthesizer as a serializable object
+     * (A "patch")
+     */
+    getSerializedState() {
+        const state = {
+            channels: [],
+            lfos: [],
+            master: {
+                volume: this.masterGain ? this.masterGain.gain.value : 0.7
+            }
+        };
+
+        for (let i = 0; i < 4; i++) {
+            const gen = this.generators[i];
+            const ch = {
+                enabled: this.channelSettings[i].enabled,
+                volume: this.channelSettings[i].volume,
+                waveform: this.channelSettings[i].waveform,
+                frequency: gen && gen.frequency ? gen.frequency : 440,
+                effects: []
+            };
+
+            // Handle special generator frequencies
+            if (gen) {
+                if (gen.baseFreq) ch.frequency = gen.baseFreq;
+                if (gen.baseFrequency) ch.frequency = gen.baseFrequency;
+                if (gen.carrierFreq) ch.frequency = gen.carrierFreq;
+                if (gen.filterFreq) ch.frequency = gen.filterFreq;
+                
+                // Save custom generator params
+                if (gen.dutyCycle !== undefined) ch.duty = gen.dutyCycle;
+                if (gen.noiseType) ch.noiseType = gen.noiseType;
+                if (gen.beatFreq) ch.beatFreq = gen.beatFreq;
+                if (gen.modulatorFreq) ch.modulatorFreq = gen.modulatorFreq;
+                if (gen.modulationDepth) ch.modIndex = gen.modulationDepth;
+                if (gen.algorithm !== undefined) ch.fmAlgo = gen.algorithm;
+                
+                // Infrasound waveform
+                if (this.channelSettings[i].waveform === 'infrasound' && gen.waveform) {
+                    ch.infraWaveform = gen.waveform;
+                }
+                
+                // Granular params
+                if (gen.density) ch.density = gen.density;
+                if (gen.spray) ch.spray = gen.spray;
+                if (gen.grainSize) ch.grainSize = gen.grainSize;
+            }
+
+            // Save effect chain
+            for (let j = 0; j < 3; j++) {
+                const effect = this.effectChains[i][j];
+                if (effect) {
+                    ch.effects.push(effect.getState());
+                } else {
+                    ch.effects.push({ type: 'none' });
+                }
+            }
+
+            state.channels.push(ch);
+        }
+
+        // Save LFOs
+        this.lfos.forEach((lfo, idx) => {
+            state.lfos.push({
+                rate: lfo.rate,
+                depth: lfo.depthValue,
+                waveform: lfo.currentWaveform
+            });
+        });
+
+        // Save LFO assignments
+        state.lfoAssignments = [];
+        for (let [key, value] of this.lfoTargets) {
+            if (key.startsWith('chan-')) {
+                const [_, chIdx, paramName] = key.split('-');
+                state.lfoAssignments.push({
+                    type: 'channel',
+                    channel: parseInt(chIdx),
+                    param: paramName,
+                    lfo: value.lfoIndex
+                });
+            } else {
+                const [chIdx, effIdx, paramName] = key.split('-');
+                state.lfoAssignments.push({
+                    type: 'effect',
+                    channel: parseInt(chIdx),
+                    effect: parseInt(effIdx),
+                    param: paramName,
+                    lfo: value.lfoIndex
+                });
+            }
+        }
+
+        return state;
+    }
+
+    /**
+     * Load a previously serialized state
+     */
+    async loadSerializedState(state) {
+        if (!state || !state.channels) return;
+
+        // Restore master
+        if (state.master && state.master.volume !== undefined) {
+            this.setMasterVolume(state.master.volume);
+        }
+
+        // Restore LFOs basic settings
+        if (state.lfos) {
+            state.lfos.forEach((lfoCfg, i) => {
+                if (this.lfos[i]) {
+                    this.setLFORate(i, lfoCfg.rate);
+                    this.setLFODepth(i, lfoCfg.depth);
+                    this.setLFOWaveform(i, lfoCfg.waveform);
+                }
+            });
+        }
+
+        // Restore channels
+        for (let i = 0; i < 4; i++) {
+            const ch = state.channels[i];
+            if (!ch) continue;
+
+            // Set basic channel params
+            this.channelSettings[i].enabled = ch.enabled;
+            this.channelSettings[i].volume = ch.volume;
+            this.channelSettings[i].waveform = ch.waveform;
+
+            // Recreate generator
+            this.setChannelWaveform(i, ch.waveform);
+            this.setChannelVolume(i, ch.volume);
+            this.setChannelFrequency(i, ch.frequency);
+            
+            const gen = this.generators[i];
+            if (gen) {
+                if (ch.duty !== undefined) this.setChannelDuty(i, ch.duty);
+                if (ch.noiseType) this.setChannelNoiseType(i, ch.noiseType);
+                if (ch.beatFreq) this.setChannelBinauralBeatFreq(i, ch.beatFreq);
+                if (ch.modulatorFreq) this.setChannelFMModulatorFreq(i, ch.modulatorFreq);
+                if (ch.modIndex) this.setChannelFMIndex(i, ch.modIndex);
+                if (ch.fmAlgo !== undefined) this.setChannelFMAlgorithm(i, ch.fmAlgo);
+                if (ch.infraWaveform) this.setChannelInfrasoundWaveform(i, ch.infraWaveform);
+                if (ch.density) this.setChannelGranularParam(i, 'density', ch.density);
+                if (ch.spray) this.setChannelGranularParam(i, 'spray', ch.spray);
+                if (ch.grainSize) this.setChannelGranularParam(i, 'grainSize', ch.grainSize);
+            }
+
+            // Restore effects
+            if (ch.effects) {
+                ch.effects.forEach((eff, j) => {
+                    this.setChannelEffect(i, j, eff.type);
+                    if (eff.type !== 'none' && eff.params) {
+                        for (let pName in eff.params) {
+                            this.setEffectParam(i, j, pName, eff.params[pName]);
+                        }
+                    }
+                });
+            }
+
+            this.setChannelEnabled(i, ch.enabled);
+        }
+
+        // Restore LFO assignments (must be done after effects/generators are created)
+        if (state.lfoAssignments) {
+            setTimeout(() => {
+                state.lfoAssignments.forEach(asm => {
+                    if (asm.type === 'channel') {
+                        // We need the param range
+                        // Frequency range depends on mode, but we can approximate or use defaults
+                        let min = 20, max = 2000;
+                        if (asm.param === 'volume') { min = 0; max = 1; }
+                        if (asm.param === 'duty') { min = 0.1; max = 0.9; }
+                        
+                        this.assignLFOToChannelParam(asm.lfo, asm.channel, asm.param, min, max, true);
+                    } else {
+                        const effect = this.effectChains[asm.channel][asm.effect];
+                        if (effect) {
+                            const defs = effect.getParamDefinitions();
+                            const def = defs.find(d => d.name === asm.param);
+                            if (def) {
+                                this.assignLFOToEffectParam(
+                                    asm.lfo, asm.channel, asm.effect, asm.param, 
+                                    def.min, def.max, true
+                                );
+                            }
+                        }
+                    }
+                });
+            }, 150);
+        }
     }
 
     /**

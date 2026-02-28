@@ -466,6 +466,9 @@
                 <div class="lfo-row">
                     <div class="lfo-instance">
                         <h4>LFO 1</h4>
+                        <div class="lfo-meter-container">
+                            <div class="lfo-meter" data-lfo="0"></div>
+                        </div>
                         <label>Rate: <span class="lfo1-rate-val">1.0</span> Hz</label>
                         <input type="range" class="lfo-rate" data-lfo="0" min="0.1" max="20" value="1" step="0.1">
                         <label>Depth: <span class="lfo1-depth-val">50</span>%</label>
@@ -480,6 +483,9 @@
                     </div>
                     <div class="lfo-instance">
                         <h4>LFO 2</h4>
+                        <div class="lfo-meter-container">
+                            <div class="lfo-meter" data-lfo="1"></div>
+                        </div>
                         <label>Rate: <span class="lfo2-rate-val">1.0</span> Hz</label>
                         <input type="range" class="lfo-rate" data-lfo="1" min="0.1" max="20" value="1" step="0.1">
                         <label>Depth: <span class="lfo2-depth-val">50</span>%</label>
@@ -494,6 +500,9 @@
                     </div>
                     <div class="lfo-instance">
                         <h4>LFO 3</h4>
+                        <div class="lfo-meter-container">
+                            <div class="lfo-meter" data-lfo="2"></div>
+                        </div>
                         <label>Rate: <span class="lfo3-rate-val">1.0</span> Hz</label>
                         <input type="range" class="lfo-rate" data-lfo="2" min="0.1" max="20" value="1" step="0.1">
                         <label>Depth: <span class="lfo3-depth-val">50</span>%</label>
@@ -558,19 +567,31 @@
 
         <div class="presets">
             <h3>Presets</h3>
-            <button class="preset-btn" data-preset="drone">🌫️ Drone</button>
-            <button class="preset-btn" data-preset="bass">🎸 Bass</button>
-            <button class="preset-btn" data-preset="lead">🎹 Lead</button>
-            <button class="preset-btn" data-preset="fx">✨ FX</button>
-            <button class="preset-btn" data-preset="meditate">🧘 Meditate</button>
-            <button class="preset-btn" data-preset="reset">↺ Reset</button>
+            <div class="preset-buttons">
+                <button class="preset-btn" data-preset="drone">🌫️ Drone</button>
+                <button class="preset-btn" data-preset="bass">🎸 Bass</button>
+                <button class="preset-btn" data-preset="lead">🎹 Lead</button>
+                <button class="preset-btn" data-preset="fx">✨ FX</button>
+                <button class="preset-btn" data-preset="meditate">🧘 Meditate</button>
+                <button class="preset-btn" data-preset="reset">↺ Reset</button>
+            </div>
+            
+            <div class="user-presets-section" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #333;">
+                <h4 style="color: #e94560; margin-bottom: 15px;">My Patches</h4>
+                <div id="user-presets-list" class="preset-buttons">
+                    <!-- User patches will appear here -->
+                </div>
+                <div class="preset-actions" style="margin-top: 15px;">
+                    <button id="save-patch-btn" class="midi-btn" style="width: 100%;">💾 Save Current Patch</button>
+                </div>
+            </div>
         </div>
     </div>
 
-    <script src="js/generators.js"></script>
-    <script src="js/effects.js"></script>
-    <script src="js/midi.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/main.js"></script>
+    <script src="js/generators_v2.js"></script>
+    <script src="js/effects_v2.js"></script>
+    <script src="js/midi_v2.js"></script>
+    <script src="js/ui_v2.js"></script>
+    <script src="js/main_v2.js"></script>
 </body>
 </html>

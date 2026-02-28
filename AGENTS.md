@@ -3,55 +3,49 @@
 ## Overview
 Real-time 4-channel modular synthesizer with professional effects chains and MIDI control.
 - **GitHub**: https://github.com/suninstaller/the_tone_generator
-- **Tech Stack**: Vanilla JS, Web Audio API, HTML5, CSS3
-- **MIDI Device**: Novation 25SL MKII (CC 1-23 mapped)
+- **Tech Stack**: Vanilla JS, Web Audio API (with AudioWorklets), HTML5, CSS3
+- **Hardware Profile**: Optimized for Novation 25SL MKII but supports any device via MIDI Learn.
 
 ## File Structure
 ```
 index.html      - Main UI (4 channels, 3 effect slots each)
-js/generators.js - 9 waveform generators (ToneGenerator, Noise, Binaural, FM, Granular, Infrasound)
-js/effects.js   - 24 professional audio effects
-js/midi.js      - Web MIDI API controller
-js/ui.js        - UI bindings and event handlers
-js/main.js      - SynthEngine - audio graph management
+js/generators.js - 9 waveform generators (High-performance Worklet architecture)
+js/effects.js   - 24 professional audio effects (Integrated with Worklets)
+js/midi.js      - Web MIDI API controller with Dynamic Learning
+js/ui.js        - UI bindings, Patch management, and visualization
+js/main.js      - SynthEngine - Audio graph and Worklet module management
+js/worklets/    - Custom DSP processors (grain-player, infrasound-processor)
 ```
 
-## Features (9 Generators)
-- Traditional: Sine, Sawtooth, Triangle, Square (with PWM)
-- **Noise**: White/Pink/Brown with filter
-- **Binaural Beats**: Brainwave entrainment (Delta/Theta/Alpha/Beta)
-- **FM Synth**: 2-operator FM with multiple algorithms
-- **Granular**: Cloud textures from oscillator grains
-- **Infrasound**: 0.5-200Hz for cymatic photography (buffer-based for stability)
+## Features & Architecture
+- **Generators**: Sine, Sawtooth, Triangle, Square (PWM), Noise, Binaural, FM Synth.
+- **Granular Synthesis**: Now uses 'grain-player' AudioWorklet for jitter-free scheduling.
+- **Infrasound**: 0.01-200Hz using custom 'infrasound-processor' Worklet for perfect stability.
+- **Dynamic Routing**: Persistent channel gain nodes with 5ms crossfades prevent all clicks during swaps.
+- **State Persistence**: Automatic localStorage saving of all synth parameters and LFO assignments.
+- **User Patch Library**: Users can save, name, and delete custom configurations.
 
-## Effects (24 Total)
-Dynamics: Compressor, PreFET, Distortion, WaveFolder, GateExpander, ZenerLimiter
-Modulation: Tremolo, Flanger, Phaser, Chorus, AM, Pan360, Doppler
-Time: TapeDelay, PingPong, PitchShifter, TimeStretch
-Space: Reverb, Pro-R
-EQ/Filter: 3-Band EQ, CombFilter, StereoWidener
-Lo-fi: RingMod, BitCrusher
+## MIDI System
+- **MIDI Learn**: Right-click any slider to enter Learn mode; move hardware to map instantly.
+- **Visual Feedback**: Success toasts and overlay indicators during mapping.
+- **Native Mappings**: Hardcoded fallback for Novation 25SL MKII CC 1-23.
 
-## Recent Fixes (Feb 23 2026)
-- ✅ Fixed JavaScript syntax errors in generators.js (duplicate export blocks)
-- ✅ Removed duplicate midi.js script tag from index.html
-- ✅ Added screenshot to README
-- 🐛 Known: Effect chain occasionally drops audio when swapping effects rapidly
-- 🐛 Known: TimeStretch effect shows console warnings (non-critical)
+## Visuals & Optimization
+- **LFO Meters**: Real-time progress bars for each LFO's modulation value.
+- **CPU Management**: Visualizer requestAnimationFrame loop automatically pauses when audio is stopped.
+- **Robustness**: Automatic detection of 'file://' protocol with helpful alerts regarding CORS restrictions.
 
-## MIDI Mappings (CC)
-```
-CC 1  - Master volume (mod wheel)
-CC 7-10  - Channel 1-4 volumes (sliders)
-CC 11-14 - Channel 1-4 frequencies (top knobs)
-CC 15-23 - Effect parameters (middle knobs)
-```
+## Recent Major Updates (Feb 26 2026)
+- ✅ **Stability**: Eliminated audio drops during effect/generator hot-swapping.
+- ✅ **DSP**: Migrated Granular and Infrasound engines to high-performance AudioWorklets.
+- ✅ **Persistence**: Implemented full Patch Serialization system (Save/Load).
+- ✅ **UX**: Added MIDI Learn, Toast notifications, and real-time LFO meters.
+- ✅ **Fix**: Resolved 'TimeStretch' API errors and non-standard phase property warnings.
 
-## Key Technical Details
-- Effect chains: Up to 3 effects per channel in series, hot-swappable
-- Audio routing: Uses `disconnect()/connect()` without stopping generators
-- Infrasound: Uses 2-second AudioBuffer loop for sub-20Hz stability
-- Requires HTTPS or localhost for Web MIDI API
+## Running the Project
+- **Requirement**: Must run via a local web server to load AudioWorklet modules.
+- **Quick Start**: 'python3 -m http.server' or 'npx serve'.
+- **URL**: http://localhost:8000
 
 ## Total Code
-~8,300 lines across 6 files
+~8,500 lines across 8 files

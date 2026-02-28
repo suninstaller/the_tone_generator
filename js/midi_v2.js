@@ -54,6 +54,10 @@ class MIDIController {
         // User can override these
         this.mappings = { ...this.defaultMappings };
         
+        // MIDI Learn state
+        this.learnMode = false;
+        this.learnTarget = null; // { type, channel, effectIndex, param }
+        
         // Pitch bend configuration
         this.pitchBendRange = 2; // semitones
         
@@ -61,9 +65,28 @@ class MIDIController {
         this.onDeviceListChanged = null;
         this.onStatusChanged = null;
         this.onMIDIMessage = null;
+        this.onLearnComplete = null;
         
         // Bind methods
         this.handleMessage = this.handleMessage.bind(this);
+    }
+    
+    /**
+     * Enter MIDI Learn mode for a specific parameter
+     * @param {Object} target - The parameter to map {type, channel, effectIndex, param}
+     */
+    startLearn(target) {
+        this.learnMode = true;
+        this.learnTarget = target;
+        console.log('MIDI Learn started for:', target);
+    }
+    
+    /**
+     * Cancel MIDI Learn mode
+     */
+    stopLearn() {
+        this.learnMode = false;
+        this.learnTarget = null;
     }
     
     /**
@@ -313,6 +336,20 @@ class MIDIController {
      * @param {number} value - CC value (0-127)
      */
     handleCC(ccNumber, value) {
+        // If in Learn Mode, assign this CC to the target
+        if (this.learnMode && this.learnTarget) {
+            this.setMapping(ccNumber, { ...this.learnTarget });
+            const completedTarget = this.learnTarget;
+            this.stopLearn();
+            
+            console.log(`Mapped CC ${ccNumber} to:`, completedTarget);
+            
+            if (this.onLearnComplete) {
+                this.onLearnComplete(ccNumber, completedTarget);
+            }
+            return;
+        }
+
         const mapping = this.mappings[ccNumber];
         if (!mapping) return;
         

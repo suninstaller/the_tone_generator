@@ -1,15 +1,6 @@
 /**
- * Effects Module
+ * Effects Module - v1.0.1
  * Provides audio effects: Ring Modulator, Flanger, Tape Delay, Reverb
- * 
- * TO ADD A NEW EFFECT:
- * 1. Create a new class extending Effect
- * 2. Implement: constructor, updateParams, setX() methods for each param, getParamDefinitions()
- * 3. Add to EffectFactory,
-        Phaser,
-        PingPongDelay,
-        AmplitudeModulation,
-        CombFilter.create() and EffectFactory.getEffectTypes()
  */
 
 class Effect {
@@ -45,6 +36,14 @@ class Effect {
         this.bypass = enable;
     }
 
+    getState() {
+        return {
+            type: this.type,
+            params: { ...this.params },
+            bypass: this.bypass
+        };
+    }
+
     destroy() {
         this.disconnect();
     }
@@ -58,248 +57,188 @@ class Effect {
 class LFO {
     constructor(audioContext) {
         this.audioContext = audioContext;
+        this.id = Math.floor(Math.random() * 10000); // Unique ID for debugging
         
-        // Main LFO oscillator
+        // Internal state
+        this._rate = 1.0;
+        this._depth = 0.5;
+        this._waveform = 'sine';
+        
+        // Manual phase tracking
+        this.phase = 0;
+        this.lastTimestamp = 0;
+        
+        // Main oscillator for AudioParam targets
         this.oscillator = this.audioContext.createOscillator();
-        this.oscillator.type = 'sine';
-        this.oscillator.frequency.value = 1; // 1 Hz default
+        this.oscillator.type = this._waveform;
+        this.oscillator.frequency.value = this._rate;
         
-        // Depth control (amplitude of LFO)
-        this.depth = this.audioContext.createGain();
-        this.depth.gain.value = 0.5; // 50% depth default
+        this.depthNode = this.audioContext.createGain();
+        this.depthNode.gain.value = this._depth;
         
-        // DC offset to allow unipolar modulation (0 to 1 instead of -1 to 1)
-        this.offset = this.audioContext.createConstantSource();
-        this.offset.offset.value = 0; // Start with bipolar (-1 to 1)
-        
-        // Connect: osc -> depth
-        this.oscillator.connect(this.depth);
-        
+        this.oscillator.connect(this.depthNode);
         this.oscillator.start();
-        this.offset.start();
         
-        // Modulation targets
-        this.targets = []; // Array of { param, min, max, bipolar }
+        this.targets = []; 
+        this.currentValue = 0;
         
-        // Animation frame for updating non-AudioParam targets
-        this.isRunning = false;
+        this.isRunning = true;
         this.updateLoop = null;
+        console.log(`LFO ${this.id} created`);
+        this.startUpdateLoop();
     }
     
-    /**
-     * Set LFO rate (frequency)
-     * @param {number} rate - Rate in Hz (0.1 to 20)
-     */
-    setRate(rate) {
-        const now = this.audioContext.currentTime;
-        this.oscillator.frequency.setTargetAtTime(rate, now, 0.01);
+    get rate() { return this._rate; }
+    get depthValue() { return this._depth; }
+    get currentWaveform() { return this._waveform; }
+
+    setRate(r) {
+        const newRate = parseFloat(r);
+        if (isNaN(newRate)) return;
+        
+        this._rate = Math.max(0.01, newRate);
+        console.log(`LFO ${this.id} rate set to: ${this._rate}`); 
+        
+        if (this.oscillator && this.audioContext) {
+            const now = this.audioContext.currentTime;
+            this.oscillator.frequency.cancelScheduledValues(now);
+            this.oscillator.frequency.setTargetAtTime(this._rate, now, 0.01);
+        }
     }
     
-    /**
-     * Set modulation depth (0 to 1)
-     * @param {number} depth - Depth 0-1
-     */
-    setDepth(depth) {
-        const now = this.audioContext.currentTime;
-        this.depth.gain.setTargetAtTime(depth, now, 0.01);
+    setDepth(d) {
+        const newDepth = parseFloat(d);
+        if (isNaN(newDepth)) return;
+        
+        this._depth = newDepth;
+        console.log(`LFO ${this.id} depth set to: ${this._depth}`);
+        
+        if (this.audioContext && this.depthNode) {
+            const now = this.audioContext.currentTime;
+            this.depthNode.gain.cancelScheduledValues(now);
+            this.depthNode.gain.setTargetAtTime(this._depth, now, 0.01);
+        }
     }
     
-    /**
-     * Set LFO waveform
-     * @param {string} type - 'sine', 'triangle', 'sawtooth', 'square'
-     */
     setWaveform(type) {
-        this.oscillator.type = type;
+        this._waveform = type;
+        console.log(`LFO ${this.id} waveform set to: ${this._waveform}`);
+        if (this.oscillator) this.oscillator.type = type;
     }
     
-    /**
-     * Add a modulation target
-     * @param {Object} target - Target object with connect/disconnect methods, or an AudioParam
-     * @param {number} min - Minimum value
-     * @param {number} max - Maximum value  
-     * @param {boolean} bipolar - If true, LFO is -1 to 1. If false, 0 to 1
-     */
     addTarget(target, min, max, bipolar = true) {
-        // Remove existing target for same param if exists
         this.removeTarget(target);
+        const targetObj = { param: target, min, max, bipolar, node: null, offsetNode: null };
         
-        const targetObj = {
-            param: target,
-            min: min,
-            max: max,
-            bipolar: bipolar,
-            node: null
-        };
-        
-        // If it's an AudioParam, connect directly
         if (target instanceof AudioParam) {
-            // Create a gain node to scale the LFO to the parameter range
-            const scaleGain = this.audioContext.createGain();
-            const range = max - min;
+            const scale = this.audioContext.createGain();
+            const offset = this.audioContext.createConstantSource();
+            offset.start();
             
+            const range = max - min;
             if (bipolar) {
-                // Bipolar: -1 to 1 → min to max
-                // Multiply by range/2, then offset by (max+min)/2
-                scaleGain.gain.value = range / 2;
-                targetObj.node = scaleGain;
-                
-                // Create offset
-                const offset = this.audioContext.createConstantSource();
+                scale.gain.value = range / 2;
                 offset.offset.value = (max + min) / 2;
-                offset.start();
-                
-                this.depth.disconnect();
-                this.depth.connect(scaleGain);
-                scaleGain.connect(target);
-                offset.connect(target);
             } else {
-                // Unipolar: 0 to 1 → min to max (only positive half)
-                scaleGain.gain.value = range;
-                targetObj.node = scaleGain;
-                
-                this.depth.disconnect();
-                this.depth.connect(scaleGain);
-                scaleGain.connect(target);
-                
-                // Add DC offset for min value
-                const offset = this.audioContext.createConstantSource();
+                scale.gain.value = range;
                 offset.offset.value = min;
-                offset.start();
-                offset.connect(target);
             }
-        } else {
-            // For non-AudioParam targets (effect setters), we'll use requestAnimationFrame
-            targetObj.node = null;
+            
+            this.depthNode.connect(scale);
+            scale.connect(target);
+            offset.connect(target);
+            
+            targetObj.node = scale;
+            targetObj.offsetNode = offset;
         }
         
         this.targets.push(targetObj);
-        
-        // Start update loop if we have non-AudioParam targets
-        if (!this.isRunning && this.hasNonAudioParamTargets()) {
-            this.startUpdateLoop();
-        }
-        
         return targetObj;
     }
     
-    /**
-     * Remove a modulation target
-     * @param {Object} target - The target to remove
-     */
     removeTarget(target) {
-        const index = this.targets.findIndex(t => t.param === target);
-        if (index !== -1) {
-            const targetObj = this.targets[index];
-            if (targetObj.node) {
-                targetObj.node.disconnect();
+        const idx = this.targets.findIndex(t => t.param === target);
+        if (idx !== -1) {
+            const t = this.targets[idx];
+            if (t.node) {
+                try { this.depthNode.disconnect(t.node); t.node.disconnect(); } catch(e){}
             }
-            this.targets.splice(index, 1);
+            if (t.offsetNode) {
+                try { t.offsetNode.stop(); t.offsetNode.disconnect(); } catch(e){}
+            }
+            this.targets.splice(idx, 1);
         }
-        
-        // Stop update loop if no more non-AudioParam targets
-        if (this.targets.length === 0 || !this.hasNonAudioParamTargets()) {
-            this.stopUpdateLoop();
-        }
-    }
-    
-    hasNonAudioParamTargets() {
-        return this.targets.some(t => !(t.param instanceof AudioParam));
     }
     
     startUpdateLoop() {
-        if (this.isRunning) return;
-        this.isRunning = true;
-        
+        this.lastLogTime = 0;
         const update = () => {
             if (!this.isRunning) return;
             
-            // Get current LFO value
-            // Since we can't read AudioParam values directly,
-            // we calculate it based on time
-            const now = this.audioContext.currentTime;
-            const freq = this.oscillator.frequency.value;
-            const phase = (now * freq * 2 * Math.PI) % (2 * Math.PI);
-            
-            let lfoValue;
-            switch (this.oscillator.type) {
-                case 'sine':
-                    lfoValue = Math.sin(phase);
-                    break;
-                case 'triangle':
-                    lfoValue = phase < Math.PI ? (2 * phase / Math.PI) - 1 : 1 - (2 * (phase - Math.PI) / Math.PI);
-                    break;
-                case 'sawtooth':
-                    lfoValue = (phase / Math.PI) - 1;
-                    break;
-                case 'square':
-                    lfoValue = phase < Math.PI ? 1 : -1;
-                    break;
-                default:
-                    lfoValue = Math.sin(phase);
+            const timestamp = performance.now();
+            if (this.lastTimestamp === 0) {
+                this.lastTimestamp = timestamp;
+                this.updateLoop = requestAnimationFrame(update);
+                return;
             }
             
-            // Apply depth
-            lfoValue *= this.depth.gain.value;
+            const dt = (timestamp - this.lastTimestamp) / 1000; 
+            this.lastTimestamp = timestamp;
             
-            // Update non-AudioParam targets
-            this.targets.forEach(target => {
-                if (!(target.param instanceof AudioParam)) {
-                    let value;
-                    if (target.bipolar) {
-                        value = ((lfoValue + 1) / 2) * (target.max - target.min) + target.min;
+            const safeDt = Math.min(dt, 0.1);
+            this.phase = (this.phase + (2 * Math.PI * this._rate * safeDt)) % (2 * Math.PI);
+            
+            let val;
+            switch (this._waveform) {
+                case 'sine': val = Math.sin(this.phase); break;
+                case 'triangle':
+                    const p = this.phase / (2 * Math.PI);
+                    val = (p < 0.5) ? (4 * p - 1) : (3 - 4 * p);
+                    break;
+                case 'sawtooth': val = (this.phase / Math.PI) - 1; break;
+                case 'square': val = this.phase < Math.PI ? 1 : -1; break;
+                default: val = Math.sin(this.phase);
+            }
+            
+            this.currentValue = val * this._depth;
+            
+            for (let i = 0; i < this.targets.length; i++) {
+                const t = this.targets[i];
+                if (!(t.param instanceof AudioParam)) {
+                    const range = t.max - t.min;
+                    let out;
+                    if (t.bipolar) {
+                        out = ((t.max + t.min) / 2) + (this.currentValue * (range / 2));
                     } else {
-                        value = (lfoValue + 1) / 2 * (target.max - target.min) + target.min;
+                        const uni = (val + 1) / 2 * this._depth;
+                        out = t.min + (uni * range);
                     }
-                    
-                    // Call the setter function
-                    if (typeof target.param === 'function') {
-                        target.param(value);
-                    }
+                    if (typeof t.param === 'function') t.param(out);
                 }
-            });
+            }
             
             this.updateLoop = requestAnimationFrame(update);
         };
-        
-        update();
+        this.updateLoop = requestAnimationFrame(update);
     }
     
     stopUpdateLoop() {
         this.isRunning = false;
-        if (this.updateLoop) {
-            cancelAnimationFrame(this.updateLoop);
-            this.updateLoop = null;
-        }
+        if (this.updateLoop) cancelAnimationFrame(this.updateLoop);
     }
     
-    /**
-     * Start the LFO
-     */
-    start() {
-        // Already started in constructor, but reset phase if needed
-    }
-    
-    /**
-     * Stop the LFO
-     */
-    stop() {
-        this.oscillator.stop();
-        this.stopUpdateLoop();
-    }
-    
-    /**
-     * Destroy and cleanup
-     */
     destroy() {
         this.stopUpdateLoop();
-        this.targets.forEach(t => {
-            if (t.node) t.node.disconnect();
-        });
-        this.targets = [];
-        this.oscillator.stop();
-        this.oscillator.disconnect();
-        this.depth.disconnect();
-        this.offset.stop();
+        [...this.targets].forEach(t => this.removeTarget(t.param));
+        try {
+            if (this.oscillator) {
+                this.oscillator.stop();
+                this.oscillator.disconnect();
+            }
+            if (this.depthNode) {
+                this.depthNode.disconnect();
+            }
+        } catch(e){}
     }
 }
 
@@ -468,11 +407,16 @@ class TapeDelay extends Effect {
 
     updateParams() {
         const now = this.audioContext.currentTime;
+        this.delay.delayTime.cancelScheduledValues(now);
         this.delay.delayTime.setTargetAtTime(this.params.time, now, 0.1);
+        this.feedback.gain.cancelScheduledValues(now);
         this.feedback.gain.setTargetAtTime(this.params.feedback, now, 0.01);
+        this.wetGain.gain.cancelScheduledValues(now);
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.cancelScheduledValues(now);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
         const freq = 200 + (this.params.tone * 7800);
+        this.toneFilter.frequency.cancelScheduledValues(now);
         this.toneFilter.frequency.setTargetAtTime(freq, now, 0.01);
     }
 
@@ -996,7 +940,7 @@ class Tremolo extends Effect {
         this.params = {
             rate: 5,            // LFO rate in Hz
             depth: 0.5,         // Modulation depth (0-1)
-            waveform: 'sine',   // sine, square, triangle, sawtooth
+            waveform: 0,        // 0=sine, 1=square, 2=triangle, 3=sawtooth
             stereo: 0,          // 0 = tremolo, 1 = auto-pan
             phase: 0            // Stereo phase offset for width
         };
@@ -1012,7 +956,6 @@ class Tremolo extends Effect {
         this.lfo.connect(this.panner.pan);
         
         this.lfo.frequency.value = this.params.rate;
-        this.lfo.type = this.params.waveform;
         this.lfo.start();
         
         this.updateParams();
@@ -1022,7 +965,9 @@ class Tremolo extends Effect {
         const now = this.audioContext.currentTime;
         
         this.lfo.frequency.setTargetAtTime(this.params.rate, now, 0.01);
-        this.lfo.type = this.params.waveform;
+        
+        const waveforms = ['sine', 'square', 'triangle', 'sawtooth'];
+        this.lfo.type = waveforms[Math.floor(this.params.waveform)] || 'sine';
         
         // Depth controls how much the gain varies
         // At depth 1: gain goes from 0 to 1
@@ -1332,32 +1277,41 @@ class ProR extends Effect {
         const now = this.audioContext.currentTime;
         
         // Pre-delay
+        this.preDelay.delayTime.cancelScheduledValues(now);
         this.preDelay.delayTime.setTargetAtTime(this.params.preDelay, now, 0.01);
         
         // Comb filter delays based on size
         const baseDelays = [0.0297, 0.0371, 0.0411, 0.0437];
         for (let i = 0; i < 4; i++) {
             const scaledDelay = baseDelays[i] * (0.5 + this.params.size);
+            this.combFilters[i].delayTime.cancelScheduledValues(now);
             this.combFilters[i].delayTime.setTargetAtTime(scaledDelay, now, 0.01);
             
             // Feedback gain based on decay time
             const feedback = Math.pow(0.001, baseDelays[i] / this.params.decay);
+            this.combGains[i].gain.cancelScheduledValues(now);
             this.combGains[i].gain.setTargetAtTime(feedback, now, 0.01);
         }
         
         // Modulation
+        this.modLFO.frequency.cancelScheduledValues(now);
         this.modLFO.frequency.setTargetAtTime(0.2 + this.params.modulation * 2, now, 0.01);
+        this.modGain.gain.cancelScheduledValues(now);
         this.modGain.gain.setTargetAtTime(this.params.modulation * 0.001, now, 0.01);
         
         // Damping filters
         const lowFreq = 200 + (1 - this.params.dampLow) * 2000;
+        this.lowDecay.frequency.cancelScheduledValues(now);
         this.lowDecay.frequency.setTargetAtTime(lowFreq, now, 0.01);
         
         const highFreq = 200 + this.params.dampHigh * 8000;
+        this.highDecay.frequency.cancelScheduledValues(now);
         this.highDecay.frequency.setTargetAtTime(highFreq, now, 0.01);
         
         // Mix
+        this.wetGain.gain.cancelScheduledValues(now);
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.cancelScheduledValues(now);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
     }
 
@@ -1446,13 +1400,28 @@ class Phaser extends Effect {
 
     updateParams() {
         const now = this.audioContext.currentTime;
+        this.lfo.frequency.cancelScheduledValues(now);
         this.lfo.frequency.setTargetAtTime(this.params.rate, now, 0.01);
-        this.lfoGain.gain.setTargetAtTime(this.params.centerFreq * this.params.depth, now, 0.01);
+        
+        // Ensure modulation depth doesn't push frequency to 0 or below
+        // LFO is +/-1, so depth should be slightly less than centerFreq
+        const safetyFloor = 20;
+        const maxSafeDepth = Math.max(0, this.params.centerFreq - safetyFloor);
+        const depth = Math.min(maxSafeDepth, this.params.centerFreq * this.params.depth);
+        
+        this.lfoGain.gain.cancelScheduledValues(now);
+        this.lfoGain.gain.setTargetAtTime(depth, now, 0.01);
+        
         for (let i = 0; i < this.stages.length; i++) {
-            this.stages[i].frequency.setTargetAtTime(this.params.centerFreq * (1 + i * 0.1), now, 0.01);
+            const freq = Math.max(safetyFloor, this.params.centerFreq * (1 + i * 0.1));
+            this.stages[i].frequency.cancelScheduledValues(now);
+            this.stages[i].frequency.setTargetAtTime(freq, now, 0.01);
         }
+        this.feedbackGain.gain.cancelScheduledValues(now);
         this.feedbackGain.gain.setTargetAtTime(this.params.feedback, now, 0.01);
+        this.wetGain.gain.cancelScheduledValues(now);
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.cancelScheduledValues(now);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
     }
 
@@ -1654,27 +1623,53 @@ class CombFilter extends Effect {
     }
 
     buildRouting() {
+        // Standard feedback comb filter routing
         this.input.connect(this.delay);
         this.delay.connect(this.filter);
         this.filter.connect(this.feedbackGain);
         this.feedbackGain.connect(this.delay);
-        this.filter.connect(this.wetGain);
-        this.wetGain.connect(this.output);
         
+        // Output path
+        this.input.connect(this.wetGain); // Direct signal in wet path
+        this.filter.connect(this.wetGain); // Delayed/Feedback signal in wet path
+        
+        this.wetGain.connect(this.output);
         this.input.connect(this.dryGain);
         this.dryGain.connect(this.output);
     }
 
     updateParams() {
         const now = this.audioContext.currentTime;
-        // Clamp delay time to avoid exceeding max delay (0.1s = min 10Hz)
-        const delayTime = Math.max(0.001, Math.min(0.1, 1 / this.params.frequency));
+        
+        // Ensure frequency is safe for division (min 20Hz)
+        const safeFreq = Math.max(20, this.params.frequency);
+        
+        // Correctly clamp delay time to support higher frequencies
+        // 0.0001s supports up to 10kHz
+        const delayTime = Math.max(0.0001, Math.min(0.1, 1 / safeFreq));
+        this.delay.delayTime.cancelScheduledValues(now);
         this.delay.delayTime.setTargetAtTime(delayTime, now, 0.01);
-        this.feedbackGain.gain.setTargetAtTime(this.params.feedback, now, 0.01);
-        const filterFreq = 200 + this.params.tone * 9800;
+        
+        // Stability protection: High resonance + high feedback = unstable loop
+        // We scale back the feedback as resonance increases
+        const resonance = 0.5 + this.params.resonance * 7.5; // Reduced max Q from 10 to 8
+        const feedbackLimit = 1.0 - (this.params.resonance * 0.2); // Lower feedback if resonance is high
+        const safeFeedback = this.params.feedback * feedbackLimit;
+        
+        this.feedbackGain.gain.cancelScheduledValues(now);
+        this.feedbackGain.gain.setTargetAtTime(safeFeedback, now, 0.01);
+        
+        const filterFreq = 200 + this.params.tone * 12000;
+        this.filter.frequency.cancelScheduledValues(now);
         this.filter.frequency.setTargetAtTime(filterFreq, now, 0.01);
-        this.filter.Q.setTargetAtTime(0.5 + this.params.resonance * 9.5, now, 0.01);
-        this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        
+        this.filter.Q.cancelScheduledValues(now);
+        this.filter.Q.setTargetAtTime(resonance, now, 0.01);
+        
+        // Adjust wetGain to avoid clipping and dryGain for the overall mix
+        this.wetGain.gain.cancelScheduledValues(now);
+        this.wetGain.gain.setTargetAtTime(this.params.mix * 0.6, now, 0.01);
+        this.dryGain.gain.cancelScheduledValues(now);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
     }
 
@@ -2996,7 +2991,7 @@ class ZenerLimiter extends Effect {
     }
     
     makeSaturationCurve() {
-        const samples = 44100;
+        const samples = 2048; // Reduced from 44100 for better performance
         const curve = new Float32Array(samples);
         const amount = this.params.saturation * 10 + 1;
         
@@ -3007,30 +3002,40 @@ class ZenerLimiter extends Effect {
         
         this.saturator.curve = curve;
         this.saturator.oversample = '4x';
+        this.lastSaturation = this.params.saturation;
     }
     
     updateParams() {
         const now = this.audioContext.currentTime;
         
+        this.compressor.threshold.cancelScheduledValues(now);
         this.compressor.threshold.setTargetAtTime(this.params.threshold, now, 0.01);
-        this.compressor.knee.setTargetAtTime(30, now, 0.01);
+        this.compressor.ratio.cancelScheduledValues(now);
         this.compressor.ratio.setTargetAtTime(this.params.ratio, now, 0.01);
+        this.compressor.attack.cancelScheduledValues(now);
         this.compressor.attack.setTargetAtTime(this.params.attack, now, 0.01);
+        this.compressor.release.cancelScheduledValues(now);
         this.compressor.release.setTargetAtTime(this.params.release, now, 0.01);
         
         const emphasisGain = this.params.emphasis * 12;
+        this.preEmphasis.frequency.cancelScheduledValues(now);
         this.preEmphasis.frequency.setTargetAtTime(this.params.emphasisFreq, now, 0.01);
+        this.preEmphasis.gain.cancelScheduledValues(now);
         this.preEmphasis.gain.setTargetAtTime(emphasisGain, now, 0.01);
         
-        this.deEmphasis.gain.setTargetAtTime(1, now, 0.01);
-        
         const makeupLinear = Math.pow(10, this.params.makeup / 20);
+        this.makeupGain.gain.cancelScheduledValues(now);
         this.makeupGain.gain.setTargetAtTime(makeupLinear, now, 0.01);
         
+        this.wetGain.gain.cancelScheduledValues(now);
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
+        this.dryGain.gain.cancelScheduledValues(now);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
         
-        this.makeSaturationCurve();
+        // Only rebuild curve if value changed
+        if (this.lastSaturation !== this.params.saturation) {
+            this.makeSaturationCurve();
+        }
     }
     
     setThreshold(t) { this.params.threshold = t; this.updateParams(); }
@@ -3071,23 +3076,7 @@ class TimeStretch extends Effect {
         this.input = this.audioContext.createGain();
         this.output = this.audioContext.createGain();
         
-        // Use delay-based approach with modulation
-        this.delayLine = this.audioContext.createDelay(1.0);
-        
-        // LFOs for granular-style modulation
-        this.lfoA = this.audioContext.createOscillator();
-        this.lfoAGain = this.audioContext.createGain();
-        this.lfoB = this.audioContext.createOscillator();
-        this.lfoBGain = this.audioContext.createGain();
-        
-        // Crossfade between the two modulated delays
-        this.gainA = this.audioContext.createGain();
-        this.gainB = this.audioContext.createGain();
-        
-        // Feedback for texture
-        this.feedbackGain = this.audioContext.createGain();
-        
-        // Mix
+        // Wet/dry mix
         this.dryGain = this.audioContext.createGain();
         this.wetGain = this.audioContext.createGain();
         
@@ -3095,74 +3084,49 @@ class TimeStretch extends Effect {
         this.params = {
             speed: 1.0,
             grainSize: 0.1,
-            overlap: 0.25,
-            feedback: 0,
+            overlap: 0.5,
             mix: 1.0
         };
         
-        this.buildRouting();
-        
-        this.lfoA.type = 'sawtooth';
-        this.lfoA.frequency.value = 10;
-        this.lfoA.start();
-        
-        this.lfoB.type = 'sawtooth';
-        this.lfoB.frequency.value = 10;
-        this.lfoB.phase = 180; // Opposite phase
-        this.lfoB.start();
-        
-        this.updateParams();
+        // Create the worklet node
+        try {
+            this.worklet = new AudioWorkletNode(this.audioContext, 'grain-player', {
+                processorOptions: { sampleRate: this.audioContext.sampleRate }
+            });
+            
+            this.buildRouting();
+            this.updateParams();
+        } catch (e) {
+            console.error('Failed to create grain-player worklet node. Is the module loaded?', e);
+            // Fallback routing if worklet fails
+            this.input.connect(this.output);
+        }
     }
     
     buildRouting() {
-        // Input to delay
-        this.input.connect(this.delayLine);
-        
-        // Delay to two parallel paths with crossfade
-        this.delayLine.connect(this.gainA);
-        this.delayLine.connect(this.gainB);
-        
-        // LFOs modulate the gains (creates granular effect)
-        this.lfoA.connect(this.lfoAGain);
-        this.lfoAGain.connect(this.gainA.gain);
-        
-        this.lfoB.connect(this.lfoBGain);
-        this.lfoBGain.connect(this.gainB.gain);
-        
-        // Sum to wet output
-        this.gainA.connect(this.wetGain);
-        this.gainB.connect(this.wetGain);
-        this.wetGain.connect(this.output);
-        
-        // Feedback
-        this.wetGain.connect(this.feedbackGain);
-        this.feedbackGain.connect(this.delayLine);
-        
-        // Dry path
+        // Input splits to dry and wet paths
         this.input.connect(this.dryGain);
+        this.input.connect(this.worklet);
+        
+        // Worklet to wet gain
+        this.worklet.connect(this.wetGain);
+        
+        // Combined to output
         this.dryGain.connect(this.output);
+        this.wetGain.connect(this.output);
     }
     
     updateParams() {
+        if (!this.worklet) return;
+        
         const now = this.audioContext.currentTime;
         
-        // Speed affects LFO rate
-        const rate = 10 / Math.max(0.25, Math.min(4, this.params.speed));
-        this.lfoA.frequency.setTargetAtTime(rate, now, 0.01);
-        this.lfoB.frequency.setTargetAtTime(rate, now, 0.01);
+        // Map params to worklet AudioParams
+        this.worklet.parameters.get('speed').setTargetAtTime(this.params.speed, now, 0.01);
+        this.worklet.parameters.get('grainSize').setTargetAtTime(this.params.grainSize, now, 0.01);
+        this.worklet.parameters.get('overlap').setTargetAtTime(this.params.overlap, now, 0.01);
         
-        // Grain size affects modulation depth
-        const depth = this.params.grainSize * 0.5;
-        this.lfoAGain.gain.setTargetAtTime(depth, now, 0.01);
-        this.lfoBGain.gain.setTargetAtTime(depth, now, 0.01);
-        
-        // Delay time based on grain size
-        this.delayLine.delayTime.setTargetAtTime(this.params.grainSize, now, 0.01);
-        
-        // Feedback
-        this.feedbackGain.gain.setTargetAtTime(this.params.feedback, now, 0.01);
-        
-        // Mix
+        // Update mix
         this.wetGain.gain.setTargetAtTime(this.params.mix, now, 0.01);
         this.dryGain.gain.setTargetAtTime(1 - this.params.mix, now, 0.01);
     }
@@ -3182,11 +3146,6 @@ class TimeStretch extends Effect {
         this.updateParams();
     }
     
-    setFeedback(feedback) {
-        this.params.feedback = Math.max(0, Math.min(0.5, feedback));
-        this.updateParams();
-    }
-    
     setMix(mix) {
         this.params.mix = Math.max(0, Math.min(1, mix));
         this.updateParams();
@@ -3196,15 +3155,16 @@ class TimeStretch extends Effect {
         return [
             { name: 'speed', label: 'Speed', min: 0.25, max: 4, default: 1, step: 0.01 },
             { name: 'grainSize', label: 'Grain Size (s)', min: 0.02, max: 0.5, default: 0.1, step: 0.01 },
-            { name: 'overlap', label: 'Overlap', min: 0.1, max: 0.75, default: 0.25, step: 0.01 },
-            { name: 'feedback', label: 'Feedback', min: 0, max: 0.5, default: 0, step: 0.01 },
+            { name: 'overlap', label: 'Overlap', min: 0.1, max: 0.75, default: 0.5, step: 0.01 },
             { name: 'mix', label: 'Mix', min: 0, max: 1, default: 1, step: 0.01 }
         ];
     }
     
     destroy() {
-        this.lfoA.stop();
-        this.lfoB.stop();
+        if (this.worklet) {
+            this.worklet.disconnect();
+            this.worklet = null;
+        }
         super.destroy();
     }
 }

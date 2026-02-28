@@ -7,6 +7,7 @@ class UIManager {
     constructor(synthEngine) {
         this.synth = synthEngine;
         this.effectParamTemplates = {};
+        this.isInitialLoad = true;
         this.init();
     }
 
@@ -15,8 +16,356 @@ class UIManager {
         this.setupChannels();
         this.setupMasterControls();
         this.setupPresets();
+        this.setupUserPresets(); // Initialize user presets
         this.setupVisualizer();
         this.setupMIDIControls();
+        
+        // Load state from local storage after UI is set up
+        setTimeout(() => this.loadFromLocalStorage(), 100);
+    }
+
+    /**
+     * Set up user preset management
+     */
+    setupUserPresets() {
+        const saveBtn = document.getElementById('save-patch-btn');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => this.saveUserPatch());
+        }
+        this.renderUserPresets();
+    }
+
+    /**
+     * Save the current state as a user patch
+     */
+    saveUserPatch() {
+        const name = prompt('Enter a name for your patch:', `Patch ${new Date().toLocaleTimeString()}`);
+        if (!name) return;
+
+        try {
+            const state = this.synth.getSerializedState();
+            const savedPatches = JSON.parse(localStorage.getItem('tone-generator-user-patches') || '[]');
+            
+            savedPatches.push({
+                name: name,
+                date: Date.now(),
+                state: state
+            });
+            
+            localStorage.setItem('tone-generator-user-patches', JSON.stringify(savedPatches));
+            this.renderUserPresets();
+            this.showToast(`Patch "${name}" saved!`, 'success');
+        } catch (e) {
+            console.error('Failed to save user patch:', e);
+            this.showToast('Failed to save patch', 'error');
+        }
+    }
+
+    /**
+     * Render the list of user patches
+     */
+    renderUserPresets() {
+        const listContainer = document.getElementById('user-presets-list');
+        if (!listContainer) return;
+
+        try {
+            const savedPatches = JSON.parse(localStorage.getItem('tone-generator-user-patches') || '[]');
+            
+            if (savedPatches.length === 0) {
+                listContainer.innerHTML = '<p style="font-size: 0.8em; opacity: 0.5;">No saved patches yet.</p>';
+                return;
+            }
+
+            listContainer.innerHTML = '';
+            savedPatches.forEach((patch, index) => {
+                const btn = document.createElement('button');
+                btn.className = 'preset-btn user-patch-btn';
+                btn.innerHTML = `<span>${patch.name}</span> <small class="delete-patch" data-index="${index}">×</small>`;
+                
+                btn.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('delete-patch')) {
+                        e.stopPropagation();
+                        this.deleteUserPatch(index);
+                    } else {
+                        this.loadUserPatch(patch.state);
+                    }
+                });
+                
+                listContainer.appendChild(btn);
+            });
+        } catch (e) {
+            console.error('Failed to render user patches:', e);
+        }
+    }
+
+    /**
+     * Load a user patch state
+     */
+    async loadUserPatch(state) {
+        if (!this.synth.isAudioStarted) {
+            this.showToast('Please start audio first', 'info');
+            // But still update UI preview
+            this.updateUIFromState(state);
+            this.pendingState = state;
+            return;
+        }
+
+        this.showToast('Loading patch...', 'info');
+        await this.synth.loadSerializedState(state);
+        this.updateUIFromState(state);
+        
+        // Ensure all effect UIs are rebuilt
+        const channels = document.querySelectorAll('.channel');
+        state.channels.forEach((ch, i) => {
+            const channel = channels[i];
+            ch.effects.forEach((eff, j) => {
+                this.updateEffectParams(channel, j, eff.type);
+            });
+        });
+        
+        this.saveToLocalStorage();
+    }
+
+    /**
+     * Delete a user patch
+     */
+    deleteUserPatch(index) {
+        if (!confirm('Are you sure you want to delete this patch?')) return;
+
+        try {
+            const savedPatches = JSON.parse(localStorage.getItem('tone-generator-user-patches') || '[]');
+            savedPatches.splice(index, 1);
+            localStorage.setItem('tone-generator-user-patches', JSON.stringify(savedPatches));
+            this.renderUserPresets();
+        } catch (e) {
+            console.error('Failed to delete patch:', e);
+        }
+    }
+
+    /**
+     * Save current state to local storage
+     */
+    saveToLocalStorage() {
+        if (this.isInitialLoad) return;
+        
+        try {
+            const state = this.synth.getSerializedState();
+            localStorage.setItem('tone-generator-patch', JSON.stringify(state));
+            console.log('Patch saved to local storage');
+        } catch (e) {
+            console.error('Failed to save to local storage:', e);
+        }
+    }
+
+    /**
+     * Load state from local storage
+     */
+    async loadFromLocalStorage() {
+        try {
+            const saved = localStorage.getItem('tone-generator-patch');
+            if (saved) {
+                const state = JSON.parse(saved);
+                console.log('Loading patch from local storage...');
+                
+                // We need the audio context to be started for many settings
+                // but we can at least update the UI values now
+                this.updateUIFromState(state);
+                
+                // If audio is already started, apply everything
+                if (this.synth.isAudioStarted) {
+                    await this.synth.loadSerializedState(state);
+                } else {
+                    // Store state to load when audio starts
+                    this.pendingState = state;
+                }
+            }
+        } catch (e) {
+            console.warn('No saved patch found or failed to parse:', e);
+        } finally {
+            this.isInitialLoad = false;
+        }
+    }
+
+    /**
+     * Update UI elements from a state object
+     */
+    updateUIFromState(state) {
+        if (!state || !state.channels) return;
+        
+        const channels = document.querySelectorAll('.channel');
+        
+        state.channels.forEach((ch, i) => {
+            const channel = channels[i];
+            if (!channel) return;
+            
+            // Channel on/off
+            const onToggle = channel.querySelector('.channel-on');
+            onToggle.checked = ch.enabled;
+            channel.classList.toggle('disabled', !ch.enabled);
+            
+            // Waveform
+            const waveformEl = channel.querySelector('.waveform');
+            waveformEl.value = ch.waveform;
+            
+            // Handle special generator controls (MUST call before frequency/duty to set ranges)
+            this.handleBinauralControls(channel, i, ch.waveform);
+            this.handleFMControls(channel, i, ch.waveform);
+            this.handleInfrasoundControls(channel, i, ch.waveform);
+            this.handleNoiseControls(channel, i, ch.waveform);
+            this.handleGranularControls(channel, i, ch.waveform);
+            
+            // Restore special generator settings if they exist
+            if (ch.noiseType) {
+                const nt = channel.querySelector('.noise-type');
+                if (nt) nt.value = ch.noiseType;
+            }
+            if (ch.beatFreq) {
+                const bf = channel.querySelector('.beat-freq');
+                const bfv = channel.querySelector('.beat-freq-val');
+                if (bf) { bf.value = ch.beatFreq; if (bfv) bfv.textContent = ch.beatFreq; }
+            }
+            if (ch.modIndex !== undefined) {
+                const mi = channel.querySelector('.fm-mod-index');
+                const miv = channel.querySelector('.mod-index-val');
+                if (mi) { mi.value = ch.modIndex; if (miv) miv.textContent = ch.modIndex; }
+            }
+            if (ch.fmAlgo !== undefined) {
+                const fa = channel.querySelector('.fm-algo');
+                if (fa) fa.value = ch.fmAlgo;
+            }
+            if (ch.infraWaveform) {
+                const iw = channel.querySelector('.infrasound-waveform');
+                if (iw) iw.value = ch.infraWaveform;
+            }
+            if (ch.density) {
+                const d = channel.querySelector('.density');
+                const dv = channel.querySelector('.density-val');
+                if (d) { d.value = ch.density; if (dv) dv.textContent = ch.density; }
+            }
+            
+            // Duty cycle
+            const dutySection = channel.querySelector('.square-duty');
+            if (ch.waveform === 'square') {
+                dutySection.classList.remove('hidden');
+                const dutyInput = channel.querySelector('.duty');
+                const dutyVal = channel.querySelector('.duty-val');
+                if (dutyInput && ch.duty !== undefined) {
+                    dutyInput.value = ch.duty * 100;
+                    dutyVal.textContent = Math.round(ch.duty * 100);
+                }
+            } else {
+                dutySection.classList.add('hidden');
+            }
+            
+            // Frequency
+            const freqInput = channel.querySelector('.frequency');
+            const freqVal = channel.querySelector('.freq-val');
+            freqInput.value = ch.frequency;
+            
+            // Format display based on range (infrasound needs decimals)
+            if (ch.waveform === 'infrasound') {
+                freqVal.textContent = parseFloat(ch.frequency).toFixed(2);
+            } else {
+                freqVal.textContent = Math.round(ch.frequency);
+            }
+            
+            // Volume
+            const volInput = channel.querySelector('.volume');
+            volInput.value = ch.volume * 100;
+            
+            // Refresh Mod buttons for channel params
+            channel.querySelectorAll('.mod-button').forEach(btn => {
+                const label = btn.parentElement;
+                const container = label.parentElement;
+                const slider = container.querySelector('input[type="range"]');
+                if (!slider) return;
+                
+                let paramName = '';
+                if (slider.classList.contains('frequency')) paramName = 'frequency';
+                else if (slider.classList.contains('volume')) paramName = 'volume';
+                else if (slider.classList.contains('duty')) paramName = 'duty';
+                
+                if (paramName && this.synth.isChannelLFOAssigned(i, paramName)) {
+                    const assignment = this.synth.getChannelLFOAssignment(i, paramName);
+                    btn.classList.add('active');
+                    btn.textContent = `LFO ${assignment.lfoIndex + 1}`;
+                } else {
+                    btn.classList.remove('active');
+                    btn.textContent = 'Mod';
+                }
+            });
+            
+            // Effects
+            const effectSelectors = channel.querySelectorAll('.effect-type');
+            if (ch.effects) {
+                ch.effects.forEach((eff, j) => {
+                    if (effectSelectors[j]) {
+                        effectSelectors[j].value = eff.type;
+                        // Don't call updateEffectParams yet if audio not started
+                        // since it needs effect instances
+                        if (this.synth.isAudioStarted) {
+                            this.updateEffectParams(channel, j, eff.type);
+                        }
+                    }
+                });
+            }
+        });
+        
+        // Master volume
+        if (state.master) {
+            const masterVol = document.getElementById('master-volume');
+            if (masterVol) masterVol.value = state.master.volume * 100;
+        }
+    }
+
+    /**
+     * Synchronize all current UI values to the synth engine
+     * Useful after starting the audio engine
+     */
+    syncAllControlsToSynth() {
+        console.log('Syncing UI state to audio engine...');
+        
+        // Master volume
+        const masterVol = document.getElementById('master-volume');
+        if (masterVol) {
+            this.synth.setMasterVolume(parseFloat(masterVol.value) / 100);
+        }
+        
+        // LFOs
+        for (let i = 0; i < 3; i++) {
+            const rateSlider = document.querySelector(`.lfo-rate[data-lfo="${i}"]`);
+            const depthSlider = document.querySelector(`.lfo-depth[data-lfo="${i}"]`);
+            const waveSelect = document.querySelector(`.lfo-waveform[data-lfo="${i}"]`);
+            
+            if (rateSlider) this.synth.setLFORate(i, parseFloat(rateSlider.value));
+            if (depthSlider) this.synth.setLFODepth(i, parseFloat(depthSlider.value) / 100);
+            if (waveSelect) this.synth.setLFOWaveform(i, waveSelect.value);
+        }
+        
+        // Channels
+        const channels = document.querySelectorAll('.channel');
+        channels.forEach((channelEl, i) => {
+            const onToggle = channelEl.querySelector('.channel-on');
+            const waveform = channelEl.querySelector('.waveform');
+            const freqSlider = channelEl.querySelector('.frequency');
+            const volSlider = channelEl.querySelector('.volume');
+            
+            if (waveform) this.synth.setChannelWaveform(i, waveform.value);
+            if (freqSlider) this.synth.setChannelFrequency(i, parseFloat(freqSlider.value));
+            if (volSlider) this.synth.setChannelVolume(i, parseFloat(volSlider.value) / 100);
+            
+            // Special generator types need their UI built
+            if (waveform) {
+                const wf = waveform.value;
+                this.handleBinauralControls(channelEl, i, wf);
+                this.handleFMControls(channelEl, i, wf);
+                this.handleInfrasoundControls(channelEl, i, wf);
+                this.handleNoiseControls(channelEl, i, wf);
+                this.handleGranularControls(channelEl, i, wf);
+            }
+            
+            if (onToggle) this.synth.setChannelEnabled(i, onToggle.checked);
+        });
     }
 
     /**
@@ -31,11 +380,35 @@ class UIManager {
                 powerBtn.textContent = '⏻ STOP AUDIO';
                 powerBtn.classList.remove('power-off');
                 powerBtn.classList.add('power-on');
+                
+                // Load pending state if any
+                if (this.pendingState) {
+                    console.log('Applying pending state...');
+                    await this.synth.loadSerializedState(this.pendingState);
+                    // Update effect param UI now that instances exist
+                    const channels = document.querySelectorAll('.channel');
+                    this.pendingState.channels.forEach((ch, i) => {
+                        const channel = channels[i];
+                        ch.effects.forEach((eff, j) => {
+                            this.updateEffectParams(channel, j, eff.type);
+                        });
+                    });
+                    this.pendingState = null;
+                } else {
+                    // Sync current UI state to engine if no pending state
+                    this.syncAllControlsToSynth();
+                }
+                
+                // Restart visualizer loop
+                if (typeof this.drawVisualizer === 'function' && !this.visFrameRequest) {
+                    this.drawVisualizer();
+                }
             } else {
                 this.synth.stop();
                 powerBtn.textContent = '⏻ START AUDIO';
                 powerBtn.classList.remove('power-on');
                 powerBtn.classList.add('power-off');
+                // The draw loop will stop itself because isAudioStarted is now false
             }
         });
     }
@@ -60,6 +433,7 @@ class UIManager {
         onToggle.addEventListener('change', (e) => {
             this.synth.setChannelEnabled(channelIndex, e.target.checked);
             channelEl.classList.toggle('disabled', !e.target.checked);
+            this.saveToLocalStorage();
         });
 
         // Waveform selector
@@ -82,6 +456,8 @@ class UIManager {
             this.handleInfrasoundControls(channelEl, channelIndex, waveform);
             this.handleNoiseControls(channelEl, channelIndex, waveform);
             this.handleGranularControls(channelEl, channelIndex, waveform);
+            
+            this.saveToLocalStorage();
         });
 
         // Frequency slider
@@ -98,6 +474,21 @@ class UIManager {
                 freqVal.textContent = Math.round(freq);
             }
             this.synth.setChannelFrequency(channelIndex, freq);
+            this.saveToLocalStorage();
+        });
+        
+        // MIDI Learn for frequency
+        freqSlider.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.initMIDILearn({ type: 'channel', channel: channelIndex, param: 'frequency' }, freqSlider);
+        });
+        
+        // Add Mod button for frequency
+        this.addModButtonToControl(freqSlider, channelIndex, 'frequency', {
+            label: 'Freq',
+            min: parseFloat(freqSlider.min),
+            max: parseFloat(freqSlider.max),
+            step: parseFloat(freqSlider.step)
         });
 
         // Duty cycle slider (for square wave)
@@ -108,6 +499,16 @@ class UIManager {
                 const duty = parseFloat(e.target.value);
                 dutyVal.textContent = duty;
                 this.synth.setChannelDuty(channelIndex, duty / 100);
+                this.saveToLocalStorage();
+            });
+            
+            // Add Mod button for duty (normalized to 0-1)
+            this.addModButtonToControl(dutySlider, channelIndex, 'duty', {
+                label: 'Duty',
+                min: 0.1,
+                max: 0.9,
+                step: 0.01,
+                isPercent: true
             });
         }
 
@@ -116,6 +517,22 @@ class UIManager {
         volSlider.addEventListener('input', (e) => {
             const vol = parseFloat(e.target.value) / 100;
             this.synth.setChannelVolume(channelIndex, vol);
+            this.saveToLocalStorage();
+        });
+        
+        // MIDI Learn for volume
+        volSlider.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.initMIDILearn({ type: 'channel', channel: channelIndex, param: 'volume' }, volSlider);
+        });
+        
+        // Add Mod button for volume
+        this.addModButtonToControl(volSlider, channelIndex, 'volume', {
+            label: 'Vol',
+            min: 0,
+            max: 1,
+            step: 0.01,
+            isPercent: true
         });
 
         // Effect selectors
@@ -125,6 +542,7 @@ class UIManager {
                 const effectType = e.target.value;
                 this.synth.setChannelEffect(channelIndex, effectIndex, effectType);
                 this.updateEffectParams(channelEl, effectIndex, effectType);
+                this.saveToLocalStorage();
             });
         });
     }
@@ -649,16 +1067,24 @@ class UIManager {
         
         const params = effect.getParamDefinitions();
         
+        // Get actual current values if the effect is already in the chain
+        const actualEffect = this.synth.effectChains[channelIndex][effectIndex];
+        
         params.forEach(param => {
             const paramDiv = document.createElement('div');
             paramDiv.className = 'effect-param';
             paramDiv.dataset.paramName = param.name;
             
+            // Get current value from the actual effect instance if it exists
+            const currentValue = (actualEffect && actualEffect.params && actualEffect.params[param.name] !== undefined)
+                ? actualEffect.params[param.name]
+                : param.default;
+            
             const label = document.createElement('label');
             label.textContent = `${param.label}: `;
             const valueSpan = document.createElement('span');
             valueSpan.className = 'param-value';
-            valueSpan.textContent = this.formatParamValue(param.default, param.step);
+            valueSpan.textContent = this.formatParamValue(currentValue, param.step);
             label.appendChild(valueSpan);
             
             // Add Mod button
@@ -685,13 +1111,14 @@ class UIManager {
             slider.min = param.min;
             slider.max = param.max;
             slider.step = param.step;
-            slider.value = param.default;
+            slider.value = currentValue;
             slider.className = 'param-slider';
             
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
                 valueSpan.textContent = this.formatParamValue(value, param.step);
                 this.synth.setEffectParam(channelIndex, effectIndex, param.name, value);
+                this.saveToLocalStorage();
             });
             
             paramDiv.appendChild(label);
@@ -807,9 +1234,155 @@ class UIManager {
     }
 
     /**
+     * Add a Mod button to a control slider's label
+     */
+    addModButtonToControl(slider, channelIndex, paramName, paramDef) {
+        const label = slider.previousElementSibling;
+        if (!label || label.tagName !== 'LABEL') return;
+        
+        const modBtn = document.createElement('button');
+        modBtn.className = 'mod-button';
+        modBtn.textContent = 'Mod';
+        modBtn.title = 'Assign LFO modulation';
+        
+        // Check if already modulated
+        if (this.synth.isChannelLFOAssigned(channelIndex, paramName)) {
+            modBtn.classList.add('active');
+            const assignment = this.synth.getChannelLFOAssignment(channelIndex, paramName);
+            modBtn.textContent = `LFO ${assignment.lfoIndex + 1}`;
+        }
+        
+        modBtn.addEventListener('click', () => {
+            this.showChannelModPanel(slider.parentElement, channelIndex, paramName, paramDef, modBtn);
+        });
+        
+        label.appendChild(modBtn);
+    }
+    
+    /**
+     * Show modulation assignment panel for a channel parameter
+     */
+    showChannelModPanel(container, channelIndex, paramName, paramDef, modBtn) {
+        // Remove existing mod panels
+        document.querySelectorAll('.mod-panel').forEach(p => p.remove());
+        
+        const existingAssignment = this.synth.getChannelLFOAssignment(channelIndex, paramName);
+        const panel = document.createElement('div');
+        panel.className = 'mod-panel';
+        
+        // Use current slider values for ranges if possible
+        const slider = container.querySelector('input[type="range"]');
+        const minVal = slider ? parseFloat(slider.min) : paramDef.min;
+        const maxVal = slider ? parseFloat(slider.max) : paramDef.max;
+        const stepVal = slider ? parseFloat(slider.step) : paramDef.step;
+        
+        if (existingAssignment) {
+            panel.innerHTML = `
+                <label>LFO ${existingAssignment.lfoIndex + 1} is modulating this parameter</label>
+                <button class="btn-cancel">Unassign</button>
+            `;
+            panel.querySelector('.btn-cancel').addEventListener('click', () => {
+                this.synth.unassignLFOFromChannelParam(channelIndex, paramName);
+                modBtn.textContent = 'Mod';
+                modBtn.classList.remove('active');
+                panel.remove();
+            });
+        } else {
+            const label = document.createElement('label');
+            label.textContent = 'Assign LFO:';
+            panel.appendChild(label);
+            
+            const lfoSelect = document.createElement('select');
+            lfoSelect.innerHTML = `
+                <option value="0">LFO 1</option>
+                <option value="1">LFO 2</option>
+                <option value="2">LFO 3</option>
+            `;
+            panel.appendChild(lfoSelect);
+            
+            // Min/Max range for modulation
+            const minLabel = document.createElement('label');
+            minLabel.textContent = 'Min Value:';
+            panel.appendChild(minLabel);
+            
+            const minSlider = document.createElement('input');
+            minSlider.type = 'range';
+            minSlider.min = minVal;
+            minSlider.max = maxVal;
+            minSlider.value = minVal;
+            minSlider.step = stepVal;
+            panel.appendChild(minSlider);
+            
+            const minDisplay = document.createElement('div');
+            minDisplay.textContent = `Min: ${minVal}`;
+            panel.appendChild(minDisplay);
+            
+            const maxLabel = document.createElement('label');
+            maxLabel.textContent = 'Max Value:';
+            panel.appendChild(maxLabel);
+            
+            const maxSlider = document.createElement('input');
+            maxSlider.type = 'range';
+            maxSlider.min = minVal;
+            maxSlider.max = maxVal;
+            maxSlider.value = maxVal;
+            maxSlider.step = stepVal;
+            panel.appendChild(maxSlider);
+            
+            const maxDisplay = document.createElement('div');
+            maxDisplay.textContent = `Max: ${maxVal}`;
+            panel.appendChild(maxDisplay);
+            
+            minSlider.addEventListener('input', () => {
+                minDisplay.textContent = `Min: ${minSlider.value}`;
+            });
+            
+            maxSlider.addEventListener('input', () => {
+                maxDisplay.textContent = `Max: ${maxSlider.value}`;
+            });
+            
+            const btnAssign = document.createElement('button');
+            btnAssign.className = 'btn-assign';
+            btnAssign.textContent = 'Assign';
+            btnAssign.addEventListener('click', () => {
+                const lfoIndex = parseInt(lfoSelect.value);
+                let min = parseFloat(minSlider.value);
+                let max = parseFloat(maxSlider.value);
+                
+                // For volume and duty, values are 0-100 in UI but 0-1 in engine
+                if (paramDef.isPercent) {
+                    min /= 100;
+                    max /= 100;
+                }
+                
+                const success = this.synth.assignLFOToChannelParam(
+                    lfoIndex, channelIndex, paramName, min, max, true
+                );
+                
+                if (success) {
+                    modBtn.textContent = `LFO ${lfoIndex + 1}`;
+                    modBtn.classList.add('active');
+                }
+                
+                panel.remove();
+            });
+            panel.appendChild(btnAssign);
+            
+            const btnCancel = document.createElement('button');
+            btnCancel.className = 'btn-cancel';
+            btnCancel.textContent = 'Cancel';
+            btnCancel.addEventListener('click', () => panel.remove());
+            panel.appendChild(btnCancel);
+        }
+        
+        container.appendChild(panel);
+    }
+
+    /**
      * Format parameter value for display
      */
     formatParamValue(value, step) {
+        if (typeof value !== 'number') return value;
         const decimals = step < 0.01 ? 4 : (step < 0.1 ? 2 : (step < 1 ? 1 : 0));
         return value.toFixed(decimals);
     }
@@ -822,6 +1395,7 @@ class UIManager {
         masterVol.addEventListener('input', (e) => {
             const vol = parseFloat(e.target.value) / 100;
             this.synth.setMasterVolume(vol);
+            this.saveToLocalStorage();
         });
         
         // Set up LFO controls
@@ -839,8 +1413,10 @@ class UIManager {
             
             slider.addEventListener('input', (e) => {
                 const rate = parseFloat(e.target.value);
+                console.log(`UI: LFO ${lfoIndex} rate changed to ${rate}`);
                 if (display) display.textContent = rate.toFixed(1);
                 this.synth.setLFORate(lfoIndex, rate);
+                this.saveToLocalStorage();
             });
         });
         
@@ -853,6 +1429,7 @@ class UIManager {
                 const depth = parseFloat(e.target.value) / 100;
                 if (display) display.textContent = Math.round(depth * 100);
                 this.synth.setLFODepth(lfoIndex, depth);
+                this.saveToLocalStorage();
             });
         });
         
@@ -862,6 +1439,7 @@ class UIManager {
             
             select.addEventListener('change', (e) => {
                 this.synth.setLFOWaveform(lfoIndex, e.target.value);
+                this.saveToLocalStorage();
             });
         });
     }
@@ -1068,6 +1646,8 @@ class UIManager {
                 this.updateEffectParams(channel, effectIndex, effectType);
             });
         });
+        
+        this.saveToLocalStorage();
     }
 
     /**
@@ -1299,12 +1879,20 @@ class UIManager {
             ctx.shadowColor = '#e94560';
         };
         
-        const draw = () => {
-            requestAnimationFrame(draw);
+        this.drawVisualizer = () => {
+            // Check if audio is actually started before continuing
+            if (!this.synth.isAudioStarted) {
+                this.visFrameRequest = null;
+                // Final clear
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                return;
+            }
+
+            this.visFrameRequest = requestAnimationFrame(this.drawVisualizer);
             
             const analyser = this.synth.getAnalyser();
             if (!analyser) {
-                // Clear canvas if no audio
                 ctx.fillStyle = '#1a1a2e';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.shadowBlur = 0;
@@ -1326,9 +1914,106 @@ class UIManager {
                 analyser.getByteFrequencyData(dataArray);
                 drawSpectrum(analyser, dataArray, bufferLength);
             }
+
+            // Update LFO visualization
+            this.updateLFOMeters();
         };
         
-        draw();
+        this.drawVisualizer();
+    }
+
+    /**
+     * Update LFO visual indicators
+     */
+    updateLFOMeters() {
+        if (!this.synth.lfos) return;
+        
+        this.synth.lfos.forEach((lfo, i) => {
+            const meter = document.querySelector(`.lfo-meter[data-lfo="${i}"]`);
+            if (meter) {
+                // Map -1..1 to 0..100%
+                const percent = (lfo.currentValue + 1) * 50;
+                meter.style.width = `${percent}%`;
+            }
+        });
+    }
+
+    /**
+     * Initialize MIDI Learn for a control
+     */
+    initMIDILearn(target, element) {
+        if (!this.synth.midi || !this.synth.midi.enabled) {
+            this.showToast('Please connect a MIDI device first', 'error');
+            return;
+        }
+
+        element.classList.add('midi-learning');
+        this.showMIDILearnOverlay(target.param);
+        
+        this.synth.midi.startLearn(target);
+        this.synth.midi.onLearnComplete = (cc, completedTarget) => {
+            element.classList.remove('midi-learning');
+            element.classList.add('midi-mapped');
+            this.hideMIDILearnOverlay();
+            this.showToast(`Mapped CC ${cc} to ${completedTarget.param}`, 'success');
+            
+            // Save mappings to local storage as well
+            const mappings = this.synth.midi.getMappings();
+            localStorage.setItem('tone-generator-midi-mappings', JSON.stringify(mappings));
+            
+            setTimeout(() => element.classList.remove('midi-mapped'), 2000);
+        };
+    }
+
+    showMIDILearnOverlay(paramName) {
+        let overlay = document.getElementById('midi-learn-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'midi-learn-overlay';
+            overlay.innerHTML = `
+                <div class="midi-learn-content">
+                    <div class="midi-icon">🎹</div>
+                    <h3>MIDI LEARN</h3>
+                    <p>Move a knob or slider to map <span class="param-name"></span></p>
+                    <button id="cancel-midi-learn">Cancel</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            
+            document.getElementById('cancel-midi-learn').addEventListener('click', () => {
+                this.synth.midi.stopLearn();
+                this.hideMIDILearnOverlay();
+                document.querySelectorAll('.midi-learning').forEach(el => el.classList.remove('midi-learning'));
+            });
+        }
+        
+        overlay.querySelector('.param-name').textContent = paramName;
+        overlay.classList.add('active');
+    }
+
+    hideMIDILearnOverlay() {
+        const overlay = document.getElementById('midi-learn-overlay');
+        if (overlay) overlay.classList.remove('active');
+    }
+
+    showToast(message, type = 'info') {
+        let container = document.getElementById('toast-container');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'toast-container';
+            document.body.appendChild(container);
+        }
+
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        
+        setTimeout(() => toast.classList.add('show'), 10);
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
     }
 }
 
